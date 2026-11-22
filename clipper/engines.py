@@ -61,9 +61,10 @@ def supoclip_status(cfg, S=None):
                    "channels with their own self-hosted copy (companies, agencies, teams and client work need written permission "
                    "from Shiori LLC). Tick the confirmation if that is you.")
     p = pathlib.Path(sc["path"]).expanduser() if sc["path"] else None
+    installed = bool(p and (p / "docker-compose.yml").is_file())
     if not p:
         why.append("SupoClip folder not set. Clone github.com/FujiwaraChoki/supoclip OUTSIDE this app's folder and enter its path.")
-    elif not (p / "docker-compose.yml").is_file():
+    elif not installed:
         why.append(f"No docker-compose.yml in {p}.")
     else:
         try:
@@ -94,7 +95,7 @@ def supoclip_status(cfg, S=None):
     if not up:
         why.append(f"SupoClip backend is not reachable at {sc['url']} (start it with the Start button or `docker compose up -d`).")
     return {"available": not why, "reasons": why, "backend_up": up, "docker": bool(docker), "docker_running": bool(docker) and bool(_DK.get("ok")), "license_url": LICENSE_URL,
-            "local_transcription": bool(sc["local_whisper_configured"])}
+            "local_transcription": bool(sc["local_whisper_configured"]), "installed": installed}
 
 
 def openclipper_status(cfg=None, S=None):
@@ -154,7 +155,8 @@ def decide(cfg, S, job):
 
 
 def find_docker():
-    """docker executable: PATH first, then Docker Desktop's default folder (a fresh install is not on the running app's PATH yet)."""
+    """docker executable: PATH first, then Docker Desktop's default folder (a fresh install is not on the running app's PATH yet -
+    on macOS, Docker Desktop only symlinks its CLI onto PATH once you finish its own first-run setup)."""
     w = shutil.which("docker")
     if w:
         return w
@@ -163,10 +165,16 @@ def find_docker():
             c = pathlib.Path(os.environ.get(env, "")) / "Docker" / "Docker" / "resources" / "bin" / "docker.exe"
             if os.environ.get(env) and c.is_file():
                 return str(c)
+    else:
+        import sys
+        if sys.platform == "darwin":
+            c = pathlib.Path("/Applications/Docker.app/Contents/Resources/bin/docker")
+            if c.is_file():
+                return str(c)
     return None
 
 
-def compose(S, cmd):
+def compose(cfg, S, cmd):
     """docker compose up -d / down in the user's SupoClip folder. Key env vars are injected for this process only."""
     sc = S["supoclip"]; p = pathlib.Path(sc["path"]).expanduser()
     if not sc["ack_license"] or not (p / "docker-compose.yml").is_file():
@@ -176,10 +184,13 @@ def compose(S, cmd):
     env = dict(os.environ)
     if os.environ.get(ST.KEY_ENV["assemblyai"]):
         env["ASSEMBLY_AI_API_KEY"] = os.environ[ST.KEY_ENV["assemblyai"]]
-    if sc.get("llm_source") == "gemini_free" and os.environ.get(ST.KEY_ENV["gemini_free"]):
-        env["GOOGLE_API_KEY"] = (__import__("clipper.util", fromlist=["x"]).split_keys(os.environ[ST.KEY_ENV["gemini_free"]]) or [""])[0]       # only for this docker process, never written to a file
-        mdl = str((S.get("providers", {}).get("gemini_free") or {}).get("model") or "").strip()
-        env.setdefault("LLM", "google-gla:" + (mdl if re.fullmatch(r"[\w.\-]{1,60}", mdl) else "gemini-flash-latest"))
+    if sc.get("llm_source") == "gemini_free":
+        from . import providers as PV
+        slot, key = PV.best_gemini(cfg, S)                      # Gemini Paid (if switched on) or Free, whichever has a
+        if key:                                                 # working key right now - the same fallback the rest of
+            env["GOOGLE_API_KEY"] = key                         # the app uses (only for this docker process, never written to a file)
+            mdl = str((S.get("providers", {}).get(slot) or {}).get("model") or "").strip()
+            env.setdefault("LLM", "google-gla:" + (mdl if re.fullmatch(r"[\w.\-]{1,60}", mdl) else "gemini-flash-latest"))
     dk = find_docker()
     if not dk:
         return 127, ("Docker was not found on this PC. Install Docker Desktop (winget install Docker.Desktop, needs admin + a restart), start it, "

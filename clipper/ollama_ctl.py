@@ -1,13 +1,22 @@
 """Optional local Ollama helpers for the Settings > Local card: list DOWNLOADED models, start the Ollama server, download (pull) a model.
 Everything talks to the loopback Ollama API only (cfg ai.ollama_url, forced to 127.0.0.1/localhost). Nothing here is needed for normal clipping."""
-import json, os, pathlib, re, shutil, subprocess, sys, time, urllib.request
+import json, os, pathlib, re, shutil, signal, subprocess, sys, time, urllib.request
+from urllib.parse import urlparse
 
 MODEL_RE = re.compile(r"^[\w.:/\-]{1,80}$")
 PRIMARY = "qwen3-vl:8b-instruct-q4_K_M"
 PRESETS = [{"name": PRIMARY, "label": "Qwen3-VL 8B Instruct (Q4_K_M) - primary", "note": "needs Ollama 0.12.7 or newer"},
            {"name": "qwen3-vl:4b-instruct-q4_K_M", "label": "Qwen3-VL 4B Instruct (Q4_K_M) - for 6-8 GB GPUs", "note": "needs Ollama 0.12.7 or newer"},
            {"name": "qwen3-vl:2b-instruct-q4_K_M", "label": "Qwen3-VL 2B Instruct (Q4_K_M) - for 4 GB GPUs / light PCs", "note": "needs Ollama 0.12.7 or newer"},
-           {"name": "qwen2.5vl:7b", "label": "Qwen2.5-VL 7B (previous default)", "note": ""}]
+           {"name": "qwen2.5vl:7b", "label": "Qwen2.5-VL 7B (previous default)", "note": ""},
+           # Not Qwen - other vision models this app also works with (anything with Ollama's "vision" capability is detected
+           # and used the same way). These are not individually tuned/tested like the Qwen3-VL presets above - pick one if
+           # you specifically want a different model family; otherwise Qwen3-VL remains the recommended default.
+           {"name": "llama3.2-vision:11b", "label": "Llama 3.2 Vision 11B (Meta) - ~8 GB VRAM", "note": "general-purpose vision model"},
+           {"name": "minicpm-v:8b", "label": "MiniCPM-V 8B - strong OCR / on-screen text reading, ~5.5 GB", "note": ""},
+           {"name": "gemma3:4b", "label": "Gemma 3 4B (Google) - light, vision-capable, ~3.3 GB", "note": ""},
+           {"name": "llava:7b", "label": "LLaVA 7B - classic, widely-used vision model, ~4.5 GB", "note": ""},
+           {"name": "moondream:1.8b", "label": "Moondream 1.8B - very light, for 4 GB VRAM or CPU-only, ~1.7 GB", "note": "smallest option; least accurate"}]
 QWEN3VL_MIN = (0, 12, 7)
 _CAP = {}                                   # model name -> (digest, vision?)  (cache: /api/show is cheap but not free)
 
@@ -84,7 +93,8 @@ def start(cfg, wait=25.0):
         return "Ollama is already running."
     b = find_bin()
     if not b:
-        raise RuntimeError("Ollama is not installed. Install it from https://ollama.com/download (or: winget install Ollama.Ollama), then press Start again.")
+        hint = "brew install ollama" if sys.platform == "darwin" else "winget install Ollama.Ollama"
+        raise RuntimeError(f"Ollama is not installed. Install it from https://ollama.com/download (or: {hint}), then press Start again.")
     kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if os.name == "nt":
         kw["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000      # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
@@ -97,6 +107,45 @@ def start(cfg, wait=25.0):
             return "Ollama started."
         time.sleep(0.5)
     raise RuntimeError("Started `ollama serve` but it did not answer on " + base + " within %ds." % wait)
+
+
+def stop(cfg, wait=10.0):
+    """Stop the Ollama server listening on this PC's configured port - whichever process that is (this app's own
+    'Start Ollama', a `brew services` one, or a bare `ollama serve`). If you run Ollama's own desktop app (menu bar /
+    system tray icon), that app may just start it again right after - quit that app instead in that case. -> message."""
+    if not up(cfg):
+        return "Ollama is not running."
+    port = urlparse(_base(cfg)).port or 11434
+    pids = []
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5).stdout
+            for line in out.splitlines():
+                if f":{port} " in line and "LISTENING" in line.upper():
+                    tail = line.split()[-1]
+                    if tail.isdigit():
+                        pids.append(int(tail))
+        else:
+            out = subprocess.run(["lsof", "-ti", f"tcp:{port}"], capture_output=True, text=True, timeout=5).stdout
+            pids = [int(x) for x in out.split() if x.strip().isdigit()]
+    except Exception:
+        pass
+    if not pids:
+        raise RuntimeError("Ollama is running, but this PC would not say which process - stop it yourself (Activity Monitor / Task Manager), or quit the Ollama app if you have one.")
+    for pid in set(pids):
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=5)
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        if not up(cfg):
+            return "Ollama stopped."
+        time.sleep(0.3)
+    raise RuntimeError("Sent the stop signal, but Ollama is still answering - it may be managed by its own app and restarting itself. Quit the Ollama app if you have one, or stop it from Activity Monitor / Task Manager.")
 
 
 def pull(cfg, model, progress=lambda pct, s: None):
@@ -132,15 +181,26 @@ def pull(cfg, model, progress=lambda pct, s: None):
     return model
 
 
+def can_auto_install():
+    return bool(shutil.which("winget") if os.name == "nt" else (shutil.which("brew") if sys.platform == "darwin" else None))
+
+
 def install(progress=lambda pct, s: None):
-    """Install Ollama with winget (Windows' own package manager; the installer is Ollama's official per-user one, no admin needed)."""
+    """Install Ollama with the OS's own package manager: winget on Windows, Homebrew on macOS (official per-user installs, no admin needed)."""
     if find_bin():
         progress(100, "Ollama is already installed"); return find_bin()
-    w = shutil.which("winget")
-    if not w:
-        raise RuntimeError("winget was not found on this PC. Install Ollama manually from https://ollama.com/download, then press Start Ollama.")
-    progress(3, "installing Ollama with winget (can take a few minutes)")
-    cmd = [w, "install", "-e", "--id", "Ollama.Ollama", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
+    if sys.platform == "darwin":
+        b = shutil.which("brew")
+        if not b:
+            raise RuntimeError("Homebrew was not found. Install it from https://brew.sh, or install Ollama manually from https://ollama.com/download, then press Start Ollama.")
+        progress(3, "installing Ollama with Homebrew (can take a few minutes)")
+        cmd, tag = [b, "install", "ollama"], "brew"
+    else:
+        w = shutil.which("winget")
+        if not w:
+            raise RuntimeError("winget was not found on this PC. Install Ollama manually from https://ollama.com/download, then press Start Ollama.")
+        progress(3, "installing Ollama with winget (can take a few minutes)")
+        cmd, tag = [w, "install", "-e", "--id", "Ollama.Ollama", "--silent", "--accept-package-agreements", "--accept-source-agreements"], "winget"
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
     pr = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", **kw)
     pct, tail = 5, []
@@ -152,12 +212,12 @@ def install(progress=lambda pct, s: None):
         m = re.search(r"(\d{1,3})\s*%", line)
         if m:
             pct = max(pct, min(90, 5 + int(int(m.group(1)) * 0.85)))
-        progress(pct, "winget: " + line[:90])
+        progress(pct, f"{tag}: " + line[:90])
     rc = pr.wait()
     if rc != 0 and not find_bin():
-        raise RuntimeError("winget install failed (exit %s): %s" % (rc, " | ".join(tail)[:300]))
+        raise RuntimeError(f"{tag} install failed (exit %s): %s" % (rc, " | ".join(tail)[:300]))
     if not find_bin():
-        raise RuntimeError("winget finished but ollama.exe was not found. Close and reopen the app, or install from https://ollama.com/download.")
+        raise RuntimeError(f"{tag} finished but ollama was not found. Close and reopen the app, or install from https://ollama.com/download.")
     progress(100, "installed")
     return find_bin()
 

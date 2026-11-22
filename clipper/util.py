@@ -36,10 +36,20 @@ def open_path(path):
 
 
 def ensure_tools_on_path():
-    """Make a freshly installed ffmpeg visible to this process and its children (ffmpeg jobs, OpenClipper's self-test). -> folder or None."""
+    """Make a freshly installed ffmpeg - and, on macOS, Homebrew/Docker's usual bin folders - visible to this process and its
+    children (ffmpeg jobs, OpenClipper's self-test, `docker compose`, `ollama`, ...). An app opened from the Dock / Finder does
+    not inherit the login shell's PATH, so without this, things installed there (brew, docker-credential-desktop, ollama) are
+    invisible even though `which` finds them in a normal Terminal - this showed up as `docker compose` failing with
+    "docker-credential-desktop: executable file not found in $PATH" even though Docker Desktop was installed correctly.
+    -> folder found for ffmpeg, or None."""
     d = find_ffmpeg_dir()
     if d:
         os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
+    if sys.platform == "darwin":
+        have = set(os.environ.get("PATH", "").split(os.pathsep))
+        add = [p for p in ("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin") if p not in have and pathlib.Path(p).is_dir()]
+        if add:
+            os.environ["PATH"] = os.pathsep.join(add) + os.pathsep + os.environ.get("PATH", "")
     return d
 
 

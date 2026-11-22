@@ -419,10 +419,11 @@ def cmd_supoclip(args, cfg):
         log("Docker Desktop installed. Restart Windows if the installer asked for it, start Docker Desktop (wait for 'Engine running'), then press Start SupoClip.")
         return
     if args.action == "install":
-        from . import supoclip_setup as SS
+        from . import supoclip_setup as SS, providers as PV
         S = ST.load(cfg)
+        gemini_slot, _ = PV.best_gemini(cfg, S)
         try:
-            r = SS.install(S, None, bool(os.environ.get(ST.KEY_ENV["gemini_free"])), lambda pc, st: stage(st, pc))
+            r = SS.install(S, None, bool(gemini_slot), lambda pc, st: stage(st, pc))
         except RuntimeError as e:
             raise SystemExit(str(e))
         patch = {"path": r["path"], "local_whisper_configured": bool(r["whisper"])}
@@ -432,9 +433,9 @@ def cmd_supoclip(args, cfg):
         log(f"SupoClip prepared in {r['path']} (generated: {', '.join(r['env_set']) or 'nothing new'}). Next: Docker Desktop running -> Start SupoClip, "
             f"then create your account + API key at {r['frontend']} (Settings > Agents & API) and paste the key here.")
         if not r["gemini_for_llm"]:
-            log("No Gemini Free key saved here, so SupoClip will use whatever LLM its own .env names (default needs an OpenRouter key).")
+            log("No working Gemini key (Paid or Free) saved here, so SupoClip will use whatever LLM its own .env names (default needs an OpenRouter key).")
         return
-    rc, out = EN.compose(ST.load(cfg), ["up", "-d"] if args.action == "up" else ["down"])
+    rc, out = EN.compose(cfg, ST.load(cfg), ["up", "-d"] if args.action == "up" else ["down"])
     print(out); raise SystemExit(rc)
 
 

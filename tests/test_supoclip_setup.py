@@ -5,6 +5,8 @@ import json, os, pathlib, subprocess, sys, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _pm_guard; _pm_guard.guard()   # never let install_docker()/install_ffmpeg() shell out to a REAL brew/winget
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="svss_"))
 FAILS = []
 def check(n, c, x=""):
@@ -64,22 +66,24 @@ os.environ["PATH"] = f"{bin_}:{OLDPATH}"
 
 # compose: keys travel in the process environment only
 S = ST.update(cfg, {"supoclip": {"path": str(dst), "llm_source": "gemini_free"}, "providers": {"gemini_free": {"model": "gemini-3-flash-preview"}}})
-rc, out = EN.compose(S, ["up", "-d"]); rec = json.load(open(TMP / "docker.json"))
+rc, out = EN.compose(cfg, S, ["up", "-d"]); rec = json.load(open(TMP / "docker.json"))
 check("compose: Gemini Free key + chosen model handed to docker via environment", rc == 0 and rec["GOOGLE_API_KEY"] == GEM and rec["LLM"] == "google-gla:gemini-3-flash-preview" and rec["argv"][:3] == ["compose", "up", "-d"] and rec["cwd"] == str(dst), rec)
 check("compose: AssemblyAI key only passed because one exists (never stored)", rec["ASSEMBLY_AI_API_KEY"] == ASM and GEM not in (dst / ".env").read_text())
 check("compose output is redacted", GEM not in out)
-S = ST.update(cfg, {"supoclip": {"llm_source": "env_file"}}); EN.compose(S, ["up", "-d"]); rec = json.load(open(TMP / "docker.json"))
+S = ST.update(cfg, {"supoclip": {"llm_source": "env_file"}}); EN.compose(cfg, S, ["up", "-d"]); rec = json.load(open(TMP / "docker.json"))
 check("compose: 'SupoClip's own .env' mode does not inject the Gemini key", rec["GOOGLE_API_KEY"] is None, rec)
 
 # no docker on PATH -> clear message, not a traceback
 os.environ["PATH"] = str(TMP / "nodocker")
 S = ST.update(cfg, {"supoclip": {"path": str(dst)}})
-rc, out = EN.compose(S, ["up", "-d"])
+rc, out = EN.compose(cfg, S, ["up", "-d"])
 check("compose without Docker: exit 127 + install hint (no crash)", rc == 127 and "Docker Desktop" in out and EN.find_docker() is None, (rc, out))
 check("status says Docker is missing", any("Docker is not installed" in w for w in EN.supoclip_status(cfg, S)["reasons"]))
 os.environ["PATH"] = f"{bin_}:{OLDPATH}"
 
-# Docker Desktop install through a fake winget (which drops a fake `docker` into PATH, like the real installer would)
+# Docker Desktop install through a FAKE package manager (winget on Windows, brew on macOS; drops a fake `docker` into PATH, like the real installer would).
+# PATH is replaced wholesale (never includes the system dirs that hold the REAL winget/brew), so this can never shell out for real.
+PM = "brew" if sys.platform == "darwin" else "winget"
 wd = TMP / "wdocker"; wd.mkdir()
 FAKE_OK = """#!%s
 import os
@@ -87,26 +91,26 @@ print('Found Docker Desktop [Docker.DockerDesktop]'); print('  25%%'); print('  
 open(%r, 'w').write('#!/bin/sh\\nexit 0\\n'); os.chmod(%r, 0o755)
 print('Successfully installed')
 """ % (sys.executable, str(wd / "docker"), str(wd / "docker"))
-(wd / "winget").write_text(FAKE_OK)
-(wd / "winget").chmod(0o755)
+(wd / PM).write_text(FAKE_OK)
+(wd / PM).chmod(0o755)
 os.environ["PATH"] = f"{wd}:{TMP/'nodocker'}"
 pg = []
 check("docker missing before install", EN.find_docker() is None)
 d1 = SS.install_docker(lambda p, s: pg.append((p, s)))
-check("install_docker: runs winget, shows progress, ends with docker found", d1 == str(wd / "docker") and pg[-1] == (100, "installed") and any("winget:" in s for _, s in pg), pg)
+check(f"install_docker: runs {PM}, shows progress, ends with docker found", d1 == str(wd / "docker") and pg[-1] == (100, "installed") and any(f"{PM}:" in s for _, s in pg), pg)
 check("install_docker: already installed -> no-op", SS.install_docker() == str(wd / "docker"))
 (wd / "docker").unlink()
-(wd / "winget").write_text("#!" + sys.executable + "\nprint('User cancelled')\nraise SystemExit(1)\n"); (wd / "winget").chmod(0o755)
+(wd / PM).write_text("#!" + sys.executable + "\nprint('User cancelled')\nraise SystemExit(1)\n"); (wd / PM).chmod(0o755)
 try: SS.install_docker(); check("install_docker: cancelled/failed installer is reported", False)
 except RuntimeError as e: check("install_docker: cancelled/failed installer is reported", "did not finish" in str(e) and "cancelled" in str(e), e)
-(wd / "winget").unlink()
-try: SS.install_docker(); check("install_docker: no winget -> manual link", False)
-except RuntimeError as e: check("install_docker: no winget -> manual link", "docker.com" in str(e), e)
+(wd / PM).unlink()
+try: SS.install_docker(); check(f"install_docker: no {PM} -> manual link", False)
+except RuntimeError as e: check(f"install_docker: no {PM} -> manual link", "docker.com" in str(e), e)
 r = subprocess.run([sys.executable, "-m", "clipper", "supoclip", "install-docker", "--config", str(TMP / "cfg.yaml")], cwd=ROOT, capture_output=True, text=True, timeout=60, env=dict(os.environ, PATH=str(TMP / "nodocker")))
-check("CLI: install-docker without winget -> clean error, non-zero", r.returncode != 0 and "docker.com" in (r.stdout + r.stderr) and "Traceback" not in r.stderr, r.stdout[-200:] + r.stderr[-200:])
+check(f"CLI: install-docker without {PM} -> clean error, non-zero", r.returncode != 0 and "docker.com" in (r.stdout + r.stderr) and "Traceback" not in r.stderr, r.stdout[-200:] + r.stderr[-200:])
 os.environ["PATH"] = f"{bin_}:{OLDPATH}"
 
-# FFmpeg: install through fake winget, PATH discovery, clear errors; Docker Desktop start; daemon-not-running message
+# FFmpeg: install through a fake package manager, PATH discovery, clear errors; Docker Desktop start; daemon-not-running message
 from clipper import tools_setup as TS, util as UT
 wf = TMP / "wff"; wf.mkdir()
 FAKE_FF = """#!%s
@@ -115,21 +119,21 @@ print('Found FFmpeg [Gyan.FFmpeg]'); print('  50%%'); print('  100%%')
 open(%r, 'w').write('#!/bin/sh\\nexit 0\\n'); os.chmod(%r, 0o755)
 print('Successfully installed')
 """ % (sys.executable, str(wf / "ffmpeg"), str(wf / "ffmpeg"))
-(wf / "winget").write_text(FAKE_FF); (wf / "winget").chmod(0o755)
+(wf / PM).write_text(FAKE_FF); (wf / PM).chmod(0o755)
 os.environ["PATH"] = f"{wf}:{TMP/'noff'}"
 pf = []
 check("ffmpeg missing before install", not TS.ffmpeg_ok())
 TS.install_ffmpeg(lambda p, s: pf.append((p, s)))
-check("install_ffmpeg: winget runs, progress, ffmpeg found afterwards", TS.ffmpeg_ok() and pf[-1] == (100, "installed") and any("winget:" in s for _, s in pf), pf)
+check(f"install_ffmpeg: {PM} runs, progress, ffmpeg found afterwards", TS.ffmpeg_ok() and pf[-1] == (100, "installed") and any(f"{PM}:" in s for _, s in pf), pf)
 check("install_ffmpeg: already installed -> no-op", TS.install_ffmpeg()  == str(wf / "ffmpeg"))
-(wf / "ffmpeg").unlink(); (wf / "winget").write_text("#!" + sys.executable + "\nprint('boom')\nraise SystemExit(1)\n")
+(wf / "ffmpeg").unlink(); (wf / PM).write_text("#!" + sys.executable + "\nprint('boom')\nraise SystemExit(1)\n")
 try: TS.install_ffmpeg(); check("install_ffmpeg: failure reported", False)
 except RuntimeError as e: check("install_ffmpeg: failure reported", "ffmpeg was not found" in str(e), e)
-(wf / "winget").unlink()
-try: TS.install_ffmpeg(); check("install_ffmpeg: no winget -> manual hint", False)
-except RuntimeError as e: check("install_ffmpeg: no winget -> manual hint", "gyan.dev" in str(e), e)
+(wf / PM).unlink()
+try: TS.install_ffmpeg(); check(f"install_ffmpeg: no {PM} -> manual hint", False)
+except RuntimeError as e: check(f"install_ffmpeg: no {PM} -> manual hint", "gyan.dev" in str(e) or "brew.sh" in str(e), e)
 try: UT.sh(["ffmpeg", "-version"]); check("sh(ffmpeg) when missing gives the Install FFmpeg hint", False)
-except RuntimeError as e: check("sh(ffmpeg) when missing gives the Install FFmpeg hint", "Install FFmpeg" in str(e) and "winget install Gyan.FFmpeg" in str(e), e)
+except RuntimeError as e: check("sh(ffmpeg) when missing gives the Install FFmpeg hint", "Install FFmpeg" in str(e), e)
 try: UT.sh(["othertool"]); check("other missing tools keep the plain message", False)
 except RuntimeError as e: check("other missing tools keep the plain message", "Install FFmpeg" not in str(e), e)
 check("find_ffmpeg_dir is a no-op off Windows / when on PATH", UT.find_ffmpeg_dir() is None and UT.ensure_tools_on_path() is None)
@@ -150,7 +154,7 @@ finally:
     subprocess.Popen = _p
 os.environ["PATH"] = str(bin_) + ":" + OLDPATH
 (bin_ / "docker").write_text("#!" + sys.executable + "\nimport sys\nsys.stderr.write('failed to connect to the docker API at npipe:////./pipe/docker_engine; check if the path is correct and if the daemon is running')\nraise SystemExit(1)\n")
-S = ST.update(cfg, {"supoclip": {"path": str(dst)}}); rc, out = EN.compose(S, ["up", "-d"])
+S = ST.update(cfg, {"supoclip": {"path": str(dst)}}); rc, out = EN.compose(cfg, S, ["up", "-d"])
 check("compose when the Docker engine is not running -> plain 'Start Docker Desktop' message", rc != 0 and out.startswith("Docker Desktop is installed but not running"), out)
 os.environ["PATH"] = f"{bin_}:{OLDPATH}"
 

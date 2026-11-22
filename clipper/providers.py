@@ -151,6 +151,40 @@ def ready_keys(cfg, S, slot):
     return [k for k in keys_of(slot) if _block(_kentry(st, slot, k), cap) is None]
 
 
+def best_key(cfg, S, slot):
+    """The one key of this slot to actually use right now: the SAME fallback this app's AI router already uses everywhere
+    else (ai_refine, model listing, ...) - the first key NOT currently known-bad (rejected / rate-limited / over its daily
+    cap), in the order the user added them. Falls back to the plain first saved key if every key is currently known-bad
+    (still worth a try - the provider may have recovered since we last asked), or "" if no key is saved at all.
+    Use this anywhere a single external integration (like handing SupoClip a key at Start time) needs 'whichever key of
+    this slot currently works', instead of hand-picking keys_of(slot)[0]."""
+    ready = ready_keys(cfg, S, slot)
+    if ready:
+        return ready[0]
+    ks = keys_of(slot)
+    return ks[0] if ks else ""
+
+
+def best_gemini(cfg, S):
+    """Whichever Gemini slot - Paid (only if switched on) or Free - has a key that works right now, in the user's own
+    Settings > AI providers priority order (same fallback the AI router already uses: one slot's key runs out/is
+    rejected -> try the next). SupoClip only understands Gemini/OpenAI/Anthropic/OpenRouter/local Ollama as its LLM
+    (its own code has no Groq support), so this is the fallback within what SupoClip can actually use.
+    -> (slot, key) - slot is "gemini_paid" or "gemini_free" (whichever answered), key is "" and slot is None if neither
+    has a usable key."""
+    slots = [s for s in S.get("priority", ("gemini_paid", "gemini_free")) if s in ("gemini_paid", "gemini_free")
+             and not (s == "gemini_paid" and not S["providers"]["gemini_paid"]["enabled"])]
+    for slot in slots:                                  # 1st pass: a slot with a key that's ready RIGHT NOW wins (this is what
+        ready = ready_keys(cfg, S, slot)                # makes paid-rejected-or-rate-limited -> free actually fall through,
+        if ready:                                        # unlike best_key()'s single-slot "retry anyway" fallback)
+            return slot, ready[0]
+    for slot in slots:                                  # 2nd pass: nothing is ready anywhere - retry the first slot that has
+        ks = keys_of(slot)                              # ANY saved key anyway (it may have recovered since we last asked)
+        if ks:
+            return slot, ks[0]
+    return None, ""
+
+
 def _current(st, slot):
     ks = keys_of(slot)
     if not ks:

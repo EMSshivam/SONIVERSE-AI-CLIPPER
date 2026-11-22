@@ -107,6 +107,13 @@ ipcMain.handle('pick-folder', async (e) => {
   const r = await dialog.showOpenDialog(win, { title: 'Choose a folder', properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
+ipcMain.handle('pick-gguf', async (e) => {
+  if (!fromApp(e)) return null;
+  // Electron's own native dialog - used instead of the dashboard's tkinter-based /api/browse fallback, which silently
+  // does nothing on a Python build with no _tkinter (e.g. some bundled/portable interpreters ship without Tcl/Tk).
+  const r = await dialog.showOpenDialog(win, { title: 'Pick a model file (.gguf)', properties: ['openFile'], filters: [{ name: 'GGUF model', extensions: ['gguf'] }, { name: 'All files', extensions: ['*'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
 ipcMain.handle('key-status', (e) => { if (!fromApp(e)) return {}; const j = readKeyFile(), o = {}; for (const n of KEYS) o[n] = !!j[n]; for (const n of Object.keys(j)) if (isKey(n)) o[n] = !!j[n]; return o; });
 ipcMain.handle('set-key', async (e, name, value) => {
   if (!fromApp(e) || !isKey(name) || typeof value !== 'string' || !value.trim()) return false;
@@ -126,7 +133,14 @@ ipcMain.handle('reveal-key', async (e, name) => {
 
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(async () => { Menu.setApplicationMenu(null); if (await startServer()) createWindow(); });
+  app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
+    // macOS Dock icon: a BrowserWindow's `icon` option only sets the title-bar/alt-tab icon on mac, not the Dock -
+    // that needs setting explicitly (matters most for this unpackaged dev run; a properly packaged .app would get
+    // its Dock icon from the bundle's own Info.plist/icns instead).
+    if (process.platform === 'darwin' && app.dock) { try { app.dock.setIcon(path.join(ROOT, 'assets', 'soniverse.png')); } catch { /* best effort */ } }
+    if (await startServer()) createWindow();
+  });
   app.on('before-quit', () => { quitting = true; killServer(); });
   app.on('window-all-closed', () => app.quit());
 }
