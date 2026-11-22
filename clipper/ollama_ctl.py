@@ -109,6 +109,24 @@ def start(cfg, wait=25.0):
     raise RuntimeError("Started `ollama serve` but it did not answer on " + base + " within %ds." % wait)
 
 
+def _quit_tray_app():
+    """Close Ollama's desktop app (Windows tray / macOS menu bar / `brew services`) so it cannot respawn the server. Best effort, never raises."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/IM", "ollama app.exe", "/F"], capture_output=True, timeout=5, creationflags=0x08000000)
+        elif sys.platform == "darwin":
+            subprocess.run(["osascript", "-e", 'tell application "Ollama" to quit'], capture_output=True, timeout=5)
+            b = shutil.which("brew")
+            if b:
+                subprocess.run([b, "services", "stop", "ollama"], capture_output=True, timeout=15)
+        else:
+            if shutil.which("systemctl"):
+                subprocess.run(["systemctl", "--user", "stop", "ollama"], capture_output=True, timeout=5)
+        time.sleep(0.8)
+    except Exception:
+        pass
+
+
 def stop(cfg, wait=10.0):
     """Stop the Ollama server listening on this PC's configured port - whichever process that is (this app's own
     'Start Ollama', a `brew services` one, or a bare `ollama serve`). If you run Ollama's own desktop app (menu bar /
@@ -116,6 +134,9 @@ def stop(cfg, wait=10.0):
     if not up(cfg):
         return "Ollama is not running."
     port = urlparse(_base(cfg)).port or 11434
+    _quit_tray_app()                                  # Ollama's own tray / menu-bar app restarts the server within seconds if it is left running
+    if not up(cfg):
+        return "Ollama stopped."
     pids = []
     try:
         if os.name == "nt":
