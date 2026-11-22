@@ -1,0 +1,364 @@
+# Reusable presets. EDIT or ADD presets in presets.local.yaml (same shape; merged over this file, survives updates).
+# weights: how much each detected signal counts toward the highlight score.
+# layout_mode: dynamic = automatic switching, or a fixed layout: split | gameplay_voice | game_audio | pip | circle | reaction
+# pip_style (dynamic mode): square | circle  -> how the "facecam over gameplay" layout looks
+# keywords_extra: {strong:[..], medium:[..]} added to the global keyword lists for this preset only
+presets:
+  gta6_cinematic:
+    label: GTA 6 Cinematic Highlights
+    group: Gaming - cinematic & story
+    clip_len: [20, 60]
+    weights: {voice: 0.5, game: 1.4, motion: 1.5, keywords: 0.4, scene: 0.8, dialogue: 0.1}
+    layout_mode: dynamic
+    pip_style: square
+    effects: {zoom: 5, freeze: 1, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+  funny_moments:
+    label: Funny Gaming Moments
+    group: Gaming - funny & reactions
+    clip_len: [15, 45]
+    weights: {voice: 1.3, game: 0.8, motion: 0.4, keywords: 1.6, scene: 0.2, dialogue: 0.3}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 4, freeze: 1, memes: 2, sfx: true, transitions: true}
+    caption_style: pop
+  facecam_reactions:
+    label: Facecam Reactions
+    group: Gaming - funny & reactions
+    clip_len: [15, 40]
+    weights: {voice: 1.8, game: 0.9, motion: 0.3, keywords: 1.2, scene: 0.2, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    bias_layout: reaction
+    effects: {zoom: 4, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+  gaming_commentary:
+    label: Gaming Commentary
+    group: Gaming - commentary
+    clip_len: [30, 75]
+    weights: {voice: 1.0, game: 0.3, motion: 0.2, keywords: 0.8, scene: 0.1, dialogue: 1.4}
+    layout_mode: split
+    effects: {zoom: 2, freeze: 0, memes: 0, sfx: false, transitions: false}
+    caption_style: clean
+  tech_tutorial:
+    label: Tech Tutorials & Repo Demos
+    group: Creators, talks & education
+    clip_len: [25, 90]
+    weights: {voice: 0.4, game: 0.1, motion: 0.5, keywords: 1.2, scene: 0.6, dialogue: 1.6}
+    layout_mode: gameplay_voice        # screen recording full-frame; cropx follows on-screen activity
+    effects: {zoom: 3, freeze: 0, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [error, bug, fixed, works, finally, deployed, deploy, shipped, install, build, benchmark, faster, slower, crash, token, agent, model, repo, commit, demo, result, wow]
+      medium: [api, function, component, install, config, test, run, output, terminal, code, prompt, gpu, cpu, latency]
+  viral_fast:
+    label: Fast-paced Viral Shorts
+    group: General - fast & viral
+    clip_len: [15, 30]
+    weights: {voice: 1.2, game: 1.0, motion: 0.5, keywords: 1.8, scene: 0.3, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 6, freeze: 2, memes: 4, sfx: true, transitions: true}
+    caption_style: pop
+  clean_pro:
+    label: Clean Professional Edit
+    group: General - clean & professional
+    clip_len: [30, 75]
+    weights: {voice: 0.8, game: 0.6, motion: 0.4, keywords: 0.5, scene: 0.4, dialogue: 1.0}
+    layout_mode: dynamic
+    pip_style: square
+    effects: {zoom: 1, freeze: 0, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+  # ===================== GAMING - by genre (any game of that type; add your own words with keywords_extra) =====================
+  fps_clutch:
+    label: Shooter - Clutches & Aces (Valorant, CS2, COD, Apex, BGMI...)
+    group: Gaming - by genre
+    clip_len: [12, 35]
+    weights: {voice: 1.2, game: 1.5, motion: 1.0, keywords: 1.4, scene: 0.2, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 5, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [ace, clutch, headshot, onetap, flick, wipe, spray, noscope, sniped, triple, quadra, penta, thrifty, defuse, rush, cracked, nuts, insane, lasered, cooked, diff]
+      medium: [plant, rotate, peek, push, smoke, flash, ult, reload, eco, force, trade, lurk]
+  battle_royale:
+    label: Battle Royale - Wipes & Wins (Fortnite, PUBG, Warzone, Free Fire...)
+    group: Gaming - by genre
+    clip_len: [15, 45]
+    weights: {voice: 1.2, game: 1.4, motion: 1.0, keywords: 1.4, scene: 0.3, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 5, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [squad, wipe, wiped, knocked, downed, third party, thirsty, booyah, victory, champion, dinner, clutch, sniped, revive, zone, storm, insane]
+      medium: [loot, drop, airdrop, circle, rotate, heal, shield, armor, gulag, safe, edge, closing]
+  moba_teamfight:
+    label: MOBA / Team Fights (League, Dota 2, Mobile Legends, Wild Rift...)
+    group: Gaming - by genre
+    clip_len: [20, 50]
+    weights: {voice: 1.0, game: 1.3, motion: 1.2, keywords: 1.2, scene: 0.4, dialogue: 0.4}
+    layout_mode: dynamic
+    pip_style: square
+    effects: {zoom: 4, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [teamfight, pentakill, penta, ace, baron, dragon, roshan, steal, outplay, backdoor, snowball, gank, flash, ult, shutdown, insane]
+      medium: [tower, turret, nexus, base, lane, jungle, ward, push, split, engage, disengage]
+  racing_sports_cars:
+    label: Racing & Car Games (Forza, NFS, F1, Assetto...)
+    group: Gaming - by genre
+    clip_len: [15, 40]
+    weights: {voice: 0.7, game: 1.6, motion: 1.6, keywords: 0.7, scene: 0.8, dialogue: 0.1}
+    layout_mode: dynamic
+    pip_style: square
+    effects: {zoom: 4, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [crash, drift, overtake, nitro, spin, wall, pole, fastest, win, photo finish, last lap, flip, send it, insane]
+      medium: [lap, pit, corner, apex, brake, boost, turbo, grid, podium, drs]
+  sports_games:
+    label: Sports Games (EA FC / FIFA, NBA 2K, Cricket, Madden...)
+    group: Gaming - by genre
+    clip_len: [12, 35]
+    weights: {voice: 1.2, game: 1.3, motion: 1.1, keywords: 1.5, scene: 0.4, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 4, freeze: 1, memes: 2, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [goal, golazo, screamer, save, dunk, buzzer, wicket, six, four, hattrick, penalty, red card, assist, nutmeg, rabona, clutch, insane]
+      medium: [shot, pass, tackle, rebound, block, steal, catch, bowled, corner, freekick, offside]
+  horror_jumpscares:
+    label: Horror Games - Jumpscares & Screams
+    group: Gaming - by genre
+    clip_len: [15, 40]
+    weights: {voice: 1.9, game: 1.2, motion: 0.6, keywords: 1.3, scene: 1.0, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    bias_layout: reaction
+    effects: {zoom: 6, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [scream, jumpscare, nope, run, behind you, what was that, no no no, get out, monster, dead, help, noo, nahi, bhaago, bhoot]
+      medium: [door, dark, flashlight, hide, footsteps, locked, key, basement, ghost]
+  sandbox_minecraft_roblox:
+    label: Sandbox & Kids' Games (Minecraft, Roblox, Terraria...)
+    group: Gaming - by genre
+    clip_len: [20, 60]
+    weights: {voice: 1.3, game: 0.7, motion: 0.6, keywords: 1.4, scene: 0.4, dialogue: 0.9}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 3, freeze: 1, memes: 2, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [diamond, creeper, nether, enderman, ender dragon, tnt, lava, boom, trap, troll, obby, rare, secret, insane, no way]
+      medium: [build, mine, craft, redstone, villager, portal, base, house, farm, speedrun]
+  boss_fights_souls:
+    label: Boss Fights & Souls-likes (Elden Ring, Sekiro, Hollow Knight...)
+    group: Gaming - by genre
+    clip_len: [20, 60]
+    weights: {voice: 1.3, game: 1.3, motion: 1.2, keywords: 1.2, scene: 0.7, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    bias_layout: reaction
+    effects: {zoom: 5, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [boss, phase, parry, you died, victory, no hit, finally, clutch, one shot, died, deathless, got him, lets go, insane]
+      medium: [roll, estus, dodge, stagger, combo, heal, grace, bonfire, rune, flask]
+  rpg_story_cinematic:
+    label: RPG / Open World - Cinematic Moments (RDR2, Witcher, Cyberpunk...)
+    group: Gaming - cinematic & story
+    clip_len: [25, 70]
+    weights: {voice: 0.5, game: 1.2, motion: 1.2, keywords: 0.5, scene: 1.0, dialogue: 0.4}
+    layout_mode: gameplay_voice
+    effects: {zoom: 3, freeze: 1, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [boss, defeated, victory, finally, secret, ending, legendary, epic, beautiful, wow, insane, plot twist]
+      medium: [quest, mission, cutscene, choice, ending, rare, loot, horse, sunset, view]
+  open_world_chaos:
+    label: Open-World Chaos (GTA, Just Cause, Saints Row, Watch Dogs...)
+    group: Gaming - funny & reactions
+    clip_len: [15, 45]
+    weights: {voice: 1.2, game: 1.2, motion: 1.4, keywords: 1.4, scene: 0.5, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 5, freeze: 1, memes: 2, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [police, wanted, chase, crash, explosion, boom, helicopter, tank, jump, ragdoll, bug, glitch, flying, no way]
+      medium: [car, bike, plane, gun, heist, stunt, ramp, cop]
+  rage_and_fails:
+    label: Rage & Epic Fails
+    group: Gaming - funny & reactions
+    clip_len: [10, 30]
+    weights: {voice: 2.0, game: 0.8, motion: 0.4, keywords: 1.8, scene: 0.3, dialogue: 0.2}
+    layout_mode: dynamic
+    pip_style: circle
+    bias_layout: reaction
+    effects: {zoom: 6, freeze: 2, memes: 4, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [fail, rage, ragequit, noooo, bruh, why, trash, scam, lag, unfair, cheating, bug, broken, seriously, wtf, kya hai yeh]
+      medium: [again, died, lost, missed, stuck, glitch, throw, choke]
+  speedrun_challenge:
+    label: Speedruns & Challenges (no-hit, nuzlocke, hardcore...)
+    group: Gaming - by genre
+    clip_len: [20, 60]
+    weights: {voice: 1.2, game: 1.0, motion: 0.9, keywords: 1.5, scene: 0.6, dialogue: 0.5}
+    layout_mode: dynamic
+    pip_style: square
+    effects: {zoom: 4, freeze: 1, memes: 1, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [world record, pb, personal best, skip, glitch, frame perfect, clip, no hit, deathless, last life, insane, clutch, wr]
+      medium: [split, route, reset, trick, strat, timer, run]
+
+  # ===================== TALKS, EDUCATION & CREATORS (no gameplay needed: a plain recording works) =====================
+  podcast_interview:
+    label: Podcast / Interview - Quotable Moments
+    group: Creators, talks & education
+    clip_len: [30, 90]
+    weights: {voice: 1.0, game: 0.2, motion: 0.3, keywords: 1.0, scene: 0.3, dialogue: 1.8}
+    layout_mode: gameplay_voice
+    effects: {zoom: 3, freeze: 0, memes: 0, sfx: false, transitions: false}
+    caption_style: clean
+    keywords_extra:
+      strong: [secret, truth, never, always, mistake, biggest, lesson, honestly, crazy, nobody, controversial, money, success, failed, regret, changed my life]
+      medium: [story, advice, started, learned, realized, problem, believe, important, why, how]
+  educational_explainer:
+    label: Lecture / Explainer / Tutorial (any subject)
+    group: Creators, talks & education
+    clip_len: [30, 90]
+    weights: {voice: 0.6, game: 0.1, motion: 0.4, keywords: 1.2, scene: 0.5, dialogue: 1.7}
+    layout_mode: gameplay_voice
+    effects: {zoom: 2, freeze: 0, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [important, remember, key, trick, formula, mistake, exam, concept, simple, easy, shortcut, secret, tip, common]
+      medium: [example, step, why, how, because, definition, rule, practice, notice]
+  motivation_speech:
+    label: Motivation / Speeches
+    group: Creators, talks & education
+    clip_len: [20, 60]
+    weights: {voice: 1.6, game: 0.3, motion: 0.3, keywords: 1.3, scene: 0.4, dialogue: 1.2}
+    layout_mode: gameplay_voice
+    effects: {zoom: 4, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [never give up, discipline, success, fear, dream, hard work, believe, mindset, focus, pain, win, comfort zone, nobody, today]
+      medium: [fail, goal, habit, push, grind, consistency, future, sacrifice]
+  comedy_standup:
+    label: Comedy / Stand-up / Roast
+    group: Creators, talks & education
+    clip_len: [20, 60]
+    weights: {voice: 1.5, game: 0.8, motion: 0.3, keywords: 1.2, scene: 0.3, dialogue: 1.0}
+    layout_mode: gameplay_voice
+    effects: {zoom: 4, freeze: 0, memes: 1, sfx: true, transitions: false}
+    caption_style: pop
+    keywords_extra:
+      strong: [joke, funny, hilarious, laughing, roast, punchline, imagine, true story, no way, seriously]
+      medium: [crowd, audience, so, then, guy, wife, mom, dad, school]
+  news_commentary:
+    label: News / Commentary / Reaction Talk
+    group: Creators, talks & education
+    clip_len: [30, 75]
+    weights: {voice: 0.9, game: 0.2, motion: 0.3, keywords: 1.0, scene: 0.5, dialogue: 1.6}
+    layout_mode: gameplay_voice
+    effects: {zoom: 2, freeze: 0, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [breaking, exposed, shocking, scam, banned, leaked, announced, controversy, truth, unbelievable, record]
+      medium: [report, official, statement, update, reason, claims, watch, confirmed]
+  just_chatting_stream:
+    label: Just Chatting / IRL Streams
+    group: Creators, talks & education
+    clip_len: [20, 60]
+    weights: {voice: 1.5, game: 0.3, motion: 0.5, keywords: 1.4, scene: 0.4, dialogue: 1.1}
+    layout_mode: dynamic
+    pip_style: circle
+    effects: {zoom: 4, freeze: 1, memes: 2, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [chat, no way, bro, wait, what, story time, storytime, clip that, crazy, actually, dead, screaming]
+      medium: [donation, sub, raid, follow, stream, viewers, mod, emote]
+
+  # ===================== LIFESTYLE, SPORTS & MUSIC =====================
+  vlog_travel:
+    label: Vlog / Travel / Day-in-the-life
+    group: Lifestyle, sports & music
+    clip_len: [15, 45]
+    weights: {voice: 0.9, game: 0.5, motion: 1.2, keywords: 0.8, scene: 1.2, dialogue: 0.6}
+    layout_mode: gameplay_voice
+    effects: {zoom: 3, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [wow, beautiful, amazing, finally, view, insane, best, surprise, unreal, incredible]
+      medium: [travel, trip, hotel, food, beach, mountain, flight, city, market, street]
+  product_review_unboxing:
+    label: Product Review / Unboxing / Tech
+    group: Lifestyle, sports & music
+    clip_len: [20, 60]
+    weights: {voice: 0.9, game: 0.2, motion: 0.7, keywords: 1.4, scene: 0.9, dialogue: 1.2}
+    layout_mode: gameplay_voice
+    effects: {zoom: 3, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [unboxing, worth, avoid, best, worst, honest, verdict, overpriced, bang for buck, disappointed, surprised, battery, camera]
+      medium: [price, build, display, speed, performance, pros, cons, design, features, test]
+  cooking_recipe:
+    label: Cooking / Recipes / Food
+    group: Lifestyle, sports & music
+    clip_len: [25, 70]
+    weights: {voice: 0.7, game: 0.4, motion: 1.2, keywords: 1.0, scene: 1.0, dialogue: 0.8}
+    layout_mode: gameplay_voice
+    effects: {zoom: 3, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [delicious, crispy, secret, tip, perfect, spicy, juicy, yummy, taste, mouthwatering, trick]
+      medium: [ingredient, mix, add, bake, fry, cook, recipe, minutes, boil, chop, serve]
+  fitness_workout:
+    label: Fitness / Workout / Sports Training
+    group: Lifestyle, sports & music
+    clip_len: [15, 45]
+    weights: {voice: 1.0, game: 0.5, motion: 1.5, keywords: 1.0, scene: 0.7, dialogue: 0.5}
+    layout_mode: gameplay_voice
+    effects: {zoom: 4, freeze: 0, memes: 0, sfx: true, transitions: true}
+    caption_style: pop
+    keywords_extra:
+      strong: [pr, personal best, heavy, burn, last rep, form, beast, no pain, push, deadlift, squat, record]
+      medium: [rep, set, bench, press, cardio, stretch, warmup, rest, gym]
+  sports_match_highlights:
+    label: Real Sports Matches (cricket, football, basketball...)
+    group: Lifestyle, sports & music
+    clip_len: [15, 40]
+    weights: {voice: 0.8, game: 1.8, motion: 1.4, keywords: 1.2, scene: 0.9, dialogue: 0.2}      # "game" = the crowd / stadium sound
+    layout_mode: gameplay_voice
+    effects: {zoom: 4, freeze: 1, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+    keywords_extra:
+      strong: [goal, wicket, six, four, out, catch, dunk, penalty, save, win, record, hattrick, century, incredible, unbelievable, what a]
+      medium: [boundary, over, run, shot, pass, tackle, corner, replay, review, innings]
+  music_dance_performance:
+    label: Music / Dance / Live Performance
+    group: Lifestyle, sports & music
+    clip_len: [15, 45]
+    weights: {voice: 0.3, game: 1.6, motion: 1.5, keywords: 0.2, scene: 1.1, dialogue: 0.0}
+    layout_mode: gameplay_voice
+    effects: {zoom: 4, freeze: 0, memes: 0, sfx: false, transitions: true}
+    caption_style: clean
+
+  # --- legacy names from the first version (kept so old commands keep working) ---
+  gta6_funny:   {group: "Legacy (old names)", label: GTA 6 Funny (legacy), clip_len: [15, 45], weights: {voice: 1.3, game: 0.8, motion: 0.4, keywords: 1.6, scene: 0.2, dialogue: 0.3}, layout_mode: dynamic, pip_style: square, effects: {zoom: 4, freeze: 1, memes: 2, sfx: true, transitions: true}, caption_style: pop}
+  gta6_epic:    {group: "Legacy (old names)", label: GTA 6 Epic (legacy),  clip_len: [20, 60], weights: {voice: 0.5, game: 1.4, motion: 1.5, keywords: 0.4, scene: 0.8, dialogue: 0.1}, layout_mode: dynamic, pip_style: square, effects: {zoom: 5, freeze: 1, memes: 0, sfx: true, transitions: true}, caption_style: clean}
+  gta6_story:   {group: "Legacy (old names)", label: GTA 6 Story (legacy), clip_len: [30, 90], weights: {voice: 0.6, game: 0.4, motion: 0.3, keywords: 0.5, scene: 0.5, dialogue: 1.5}, layout_mode: gameplay_voice, effects: {zoom: 2, freeze: 0, memes: 0, sfx: false, transitions: true}, caption_style: clean}
+  gta6_reactions: {group: "Legacy (old names)", label: GTA 6 Reactions (legacy), clip_len: [15, 40], weights: {voice: 1.8, game: 0.9, motion: 0.3, keywords: 1.2, scene: 0.2, dialogue: 0.2}, layout_mode: dynamic, pip_style: square, bias_layout: reaction, effects: {zoom: 4, freeze: 1, memes: 1, sfx: true, transitions: true}, caption_style: pop}
+  gaming_meme_shorts: {group: "Legacy (old names)", label: Meme Shorts (legacy), clip_len: [15, 30], weights: {voice: 1.2, game: 1.0, motion: 0.5, keywords: 1.8, scene: 0.3, dialogue: 0.2}, layout_mode: dynamic, pip_style: square, effects: {zoom: 6, freeze: 2, memes: 4, sfx: true, transitions: true}, caption_style: pop}
+
+# Keyword boosts (lower-case, Roman script): any game, Hinglish + English reactions.
+keywords:
+  strong: [arre, abe, oye, oh, omg, wtf, lol, haha, hahaha, bhai, yaar, pagal, kya, gaya, gayi, maar, mar, bach, bacho, bhaag, bhag, police, cop, cops, wanted, crash, boom, blast, headshot, nahi, nahin, help, noo, nooo, whoa, wow, damn, bro, dekh, dekho, sach, kill, killed, boss, duel, parry, clutch, insane, crazy, finally, ace, dead, dying, secret, easter, glitch, bug]
+  medium: [accha, achha, bas, chal, chalo, ruk, ruko, ek, minute, scene, mission, gun, car, bike, helicopter, jump, run, fight, katana, sword, stealth, arrow, horse]

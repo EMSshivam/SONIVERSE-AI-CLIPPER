@@ -1,0 +1,3 @@
+transcription: {provider: file, file: tests/sample/transcript.json}
+encoder: x264
+output: {preview_clips: 5, max_clips: 3}

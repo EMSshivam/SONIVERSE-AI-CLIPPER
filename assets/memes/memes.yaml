@@ -1,0 +1,6 @@
+# tag words (lower-case, Roman script) that trigger each sticker. Add your own licensed memes here.
+memes:
+  - {file: bruh.png, tags: [arre, abe, oye, kya, bhai]}
+  - {file: skill_issue.png, tags: [gaya, gayi, mar, maar, crash, police]}
+  - {file: nope.png, tags: [nahi, nahin, noo, nooo, bach, bacho]}
+  - {file: let_him_cook.png, tags: [chal, chalo, dekh, dekho, scene]}

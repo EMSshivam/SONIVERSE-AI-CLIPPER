@@ -1,0 +1,17 @@
+{
+  "name": "soniverse-ai-clipper",
+  "version": "1.0.0",
+  "description": "Local-first AI clipper: turns long recordings into vertical Shorts/Reels. Runs on Windows, macOS and Linux, with or without a GPU.",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/run.mjs desktop",
+    "start": "node scripts/run.mjs desktop",
+    "web": "node scripts/run.mjs web",
+    "doctor": "node scripts/run.mjs doctor",
+    "cli": "node scripts/run.mjs cli",
+    "test": "node scripts/run.mjs test"
+  }
+}

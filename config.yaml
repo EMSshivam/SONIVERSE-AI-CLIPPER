@@ -1,0 +1,70 @@
+# SONIVERSE AI Clipper defaults. Personal overrides go in config.local.yaml (same shape, never overwritten by updates).
+# API KEYS: save them in the app (Settings > AI Providers). CLI users: env vars GEMINI_PAID_API_KEY, GEMINI_FREE_API_KEY, GROQ_API_KEY, ASSEMBLYAI_API_KEY, SUPOCLIP_API_KEY
+
+paths:                   # relative to the install folder unless absolute
+  input: input           # drop recordings here (or browse to any file)
+  output: output         # finished clips + previews + CapCut bundles
+  cache: cache           # proxies, audio, transcripts (safe to delete; makes re-runs fast + resumable)
+  projects: projects     # per-run job logs / state
+
+encoder: auto            # auto | nvenc | videotoolbox | amf | qsv | x264   (auto = the first hardware encoder whose REAL test encode works here, else the CPU)
+decode_hwaccel: auto     # auto | cuda | videotoolbox | none   (auto = cuda on NVIDIA, videotoolbox on a Mac, else CPU)
+
+performance:
+  priority: below_normal   # keep the PC usable while rendering: normal | below_normal | idle
+  max_parallel_exports: 1  # NVENC sessions; 1 is safest while gaming/streaming
+  whisper_compute: ''      # '' = automatic (float16 / int8_float16 on a GPU, int8 on the CPU); or force float16 | int8_float16 | int8
+  whisper_beam: 1          # 1 = fastest, 5 = most accurate
+  vram_cap_gb: 12          # informational guard: local vision model is skipped if more is needed
+
+ai:
+  # Provider chain, keys, models, enable switches and spend limits are managed in the app: Settings > AI Providers
+  # (stored in projects/ai_settings.json - never contains keys; keys live in Electron's OS-encrypted store).
+  provider: auto           # auto = follow the Settings priority order | gemini_paid | gemini_free | groq_free | local (force one)
+  allow_paid: false        # only for CLOUD AUDIO upload (Groq Whisper ASR); paid Gemini is governed by its own Settings switch + limits
+  rerank: false            # legacy; re-ranking now runs whenever a provider is available (heuristics-only if none)
+  paid_top_n: 6            # max candidates sent to a provider (limits cost)
+  ollama_url: http://127.0.0.1:11434
+  ollama_vision: false     # local Ollama vision model also looks at 3 keyframes per clip
+costs:
+  inr_per_usd: 95.0
+  require_confirmation: true   # paid calls print an estimate and ask y/N (dashboard passes your tick-box instead)
+
+transcription:
+  provider: local        # local (faster-whisper on RTX) | file | none | groq | deepgram | assemblyai (cloud ones need ai.allow_paid)
+  language: hi           # hi = Hindi/Hinglish; Roman script is forced below
+  roman_script: true
+  prompt: "Hinglish gaming commentary: yaar, bhai, arre, kya scene hai, GTA, police, wanted level, mission."
+  local_model: auto      # auto = pick by hardware (GPU: large-v3-turbo; CPU: small/base) | tiny | base | small | medium | large-v3 | large-v3-turbo | any Hugging Face repo id | a local model folder
+  vad: true              # Silero VAD (bundled with faster-whisper) removes silence/noise -> faster + fewer hallucinations
+  groq_model: whisper-large-v3-turbo
+  deepgram_model: nova-3
+  chunk_minutes: 20
+
+analysis:
+  proxy_fps: 15
+  proxy_width: 640
+  hop: 0.5
+  scene_detect: true     # PySceneDetect on the proxy when installed (else a cheap frame-difference detector)
+  silero_speech: true    # Silero VAD speech mask on the mic track when available (else loudness threshold)
+
+facecam:
+  # rect: [0.78, 0.70, 0.20, 0.28]   # optional manual override: the webcam as [x, y, width, height], fractions of the frame (skips auto-detection)
+  mode: show             # show = the webcam becomes its own panel | hide = remove it from the picture (blur-filled) | off = leave the video exactly as it is
+  auto: true             # (older switch; false = off) a webcam overlay INSIDE a 16:9 recording (a corner) is found automatically: its own panel + hidden from the character tracker. false = off
+
+output:
+  aspect: "9:16"         # shape: 9:16 (Shorts/Reels/TikTok) | 4:5 (Instagram feed) | 3:4 | 1:1 (square) | 16:9 (YouTube landscape) | any W:H
+  resolution: 1080       # length of the SHORT side in pixels: 480 | 720 | 1080 (Full HD) | 1440 (2K) | 2160 (4K)   e.g. 9:16 @1080 = 1080x1920, 16:9 @1080 = 1920x1080
+  # size: [1080, 1920]   # optional: an exact [W, H] overrides aspect + resolution (also: --size 2160x3840)
+  fps: source            # source = keep the recording's frame rate (60 stays 60, 30 stays 30; never invents frames)
+  hdr: tonemap
+  max_clips: 8
+  preview_clips: 12
+  capcut_bundle: true    # also write clean parts + SRT + audio stems + edit notes for CapCut
+
+assets:
+  memes_dir: assets/memes
+  sfx_dir: assets/sfx
+  fonts_dir: assets/fonts
+  caption_font: Arial Black

@@ -1,0 +1,10 @@
+{
+  "source": "https://github.com/GrepCut/OpenClipper",
+  "commit": "a2fc42482d041f7034c24bc41ac5d868de72da60",
+  "base": "https://raw.githubusercontent.com/GrepCut/OpenClipper/a2fc42482d041f7034c24bc41ac5d868de72da60/src-tauri/resources/models/clipper-vision/",
+  "files": {
+    "yolox_s.onnx":      {"sha256": "afcc56a126d485a7f2ac7a5cb61971339872227aeece6d2d531e723615f26a49", "bytes": 35849124, "license": "Apache-2.0 (YOLOX)"},
+    "yolox_s.fp16.onnx": {"sha256": "341cfc33a729a3b89508bb36e79de215215b7410338d37482985bcbbf46c1f8d", "bytes": 17947496, "license": "Apache-2.0 (YOLOX)"},
+    "coco80.txt":        {"sha256": "bd17f1ee35d5f3c862a4894605855abbb9dda4b0621fdb0ac4c2c8c7bb7e730a", "bytes": 621, "license": "labels"}
+  }
+}

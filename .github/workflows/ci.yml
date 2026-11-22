@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false          # a failure on one OS must not hide the others
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install Python packages (CPU-only runner: no CUDA libraries)
+        run: python -m pip install -r requirements.txt
+
+      - name: Check the Node setup / run scripts
+        run: |
+          node --check scripts/lib.mjs
+          node --check scripts/setup.mjs
+          node --check scripts/run.mjs
+
+      - name: Hardware / tools report (must work with no GPU)
+        run: python -m clipper doctor
+
+      - name: Provider chain, multi-key failover, settings (mock servers, no network)
+        run: python tests/test_ai_chain.py
+
+      - name: Presets + output formats (aspect ratio x resolution)
+        run: python tests/test_presets.py
+
+      - name: Folders, time estimates, launchers (no network, no GPU)
+        run: python tests/test_system.py
+
+      - name: Webcam inside the recording (detection, crop/mask, render graph)
+        run: python tests/test_facecam.py
+
+      - name: OpenClipper camera logic
+        run: python tests/test_openclipper.py

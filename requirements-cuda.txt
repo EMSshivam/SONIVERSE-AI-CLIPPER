@@ -1,0 +1,4 @@
+# NVIDIA only: CUDA 12 libraries faster-whisper (CTranslate2) needs to run Whisper on the GPU. Installed automatically by the setup
+# script when nvidia-smi is found. Not needed (and not installed) on Macs, AMD/Intel GPUs or CPU-only PCs.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10

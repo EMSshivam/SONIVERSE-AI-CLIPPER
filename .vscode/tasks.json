@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "SONIVERSE: setup", "type": "shell", "command": "npm run setup", "problemMatcher": [] },
+    { "label": "SONIVERSE: run desktop app", "type": "shell", "command": "npm run dev", "problemMatcher": [], "isBackground": true },
+    { "label": "SONIVERSE: run browser dashboard", "type": "shell", "command": "npm run web", "problemMatcher": [], "isBackground": true },
+    { "label": "SONIVERSE: tests", "type": "shell", "command": "npm test", "problemMatcher": [] }
+  ]
+}

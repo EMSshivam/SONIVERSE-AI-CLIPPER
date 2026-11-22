@@ -1,0 +1,39 @@
+cache/
+output/
+input/
+projects/
+.venv/
+config.local.yaml
+presets.local.yaml
+tests/sample/
+__pycache__/
+assets/models/
+electron/node_modules/
+engines/openclipper/.venv/
+engines/openclipper/models/
+engines/openclipper/install.json
+
+# --- OS / editor / logs ---
+.DS_Store
+Thumbs.db
+*.log
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+
+# --- secrets / local state (never commit) ---
+.env
+.env.*
+!.env.example
+keys.json
+*.pem
+projects/
+node_modules/
+*.pyc
+
+# --- portable tools downloaded by the one-click launcher + per-install folder choices ---
+tools/
+user_paths.json
+electron/node_modules/
+user_config.json

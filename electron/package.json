@@ -1,0 +1,10 @@
+{
+  "name": "soniverse-ai-clipper-ui",
+  "productName": "SONIVERSE AI Clipper",
+  "version": "1.0.0",
+  "description": "Desktop shell for the local SONIVERSE AI Clipper engine",
+  "main": "main.js",
+  "private": true,
+  "scripts": { "start": "electron ." },
+  "devDependencies": { "electron": "^45.4.1" }
+}
