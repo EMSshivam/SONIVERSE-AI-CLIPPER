@@ -50,7 +50,8 @@ HTML = r"""
    <div class=small>Suggested order: Gemini Free &rarr; Groq &rarr; Local (drag to change under <i>Fallback priority</i>). Gemini sees transcript text and optional keyframes; Groq sees transcript text only.</div></div>
   <div class=card style="margin-top:14px"><b>Optimize settings (AI helper)</b>
    <div class=small style="margin:6px 0">\u201cOptimize for this computer\u201d can ask an AI to fine-tune your settings. Only your hardware model names are sent (no files, paths or user name). It uses the keys of the providers you add below, in the priority order set there.</div>
-   <div class=small id=opt_src_info style="margin-top:6px"></div></div>
+   <div class=small id=opt_src_info style="margin-top:6px"></div>
+   <div class=row style="margin-top:10px;gap:8px"><button class=pri onclick="tab('studio');optStart()">Optimize settings for this computer</button></div></div>
   <div class=g2 id=provCards style="margin-top:14px"></div>
   <div class=card id=addProv style="margin-top:14px"></div>
   <h2 class=sh>Fallback priority</h2>
