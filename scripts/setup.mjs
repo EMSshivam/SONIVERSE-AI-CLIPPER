@@ -5,7 +5,7 @@
 // Safe to re-run. Touches only this folder.
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, IS_WIN, IS_MAC, VENV, VENV_PY, ELECTRON_DIR, step, ok, warn, fail, yellow, cyan, probe, run, have, findPython, venvReady, hasNvidia, ffmpegHint, ffmpegPresent } from './lib.mjs';
+import { ROOT, IS_WIN, IS_MAC, VENV, VENV_PY, ELECTRON_DIR, step, ok, warn, fail, yellow, cyan, probe, run, have, findPython, venvReady, hasNvidia, ffmpegHint, ffmpegPresent, brandElectronMac } from './lib.mjs';
 
 const flags = new Set(process.argv.slice(2));
 const nodeMajor = +process.versions.node.split('.')[0];
@@ -59,7 +59,7 @@ else if (!have('npm', ['--version'])) warn('npm not found - skipping the desktop
 else {
   const code = run('npm', ['install', '--no-audit', '--no-fund'], { cwd: ELECTRON_DIR, shell: IS_WIN });
   if (code !== 0) warn('Electron did not install - use the browser dashboard:  npm run web');
-  else ok('desktop app ready');
+  else { brandElectronMac(); ok('desktop app ready'); }
 }
 
 step('6/6  Models and engines for THIS computer (Whisper model, OpenClipper' + (flags.has('--with-ollama') ? ', local vision model' : '') + ')');

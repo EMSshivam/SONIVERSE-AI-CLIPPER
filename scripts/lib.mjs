@@ -81,3 +81,22 @@ export function electronBin() {
   const b = path.join(ELECTRON_DIR, 'node_modules', '.bin', IS_WIN ? 'electron.cmd' : 'electron');
   return fs.existsSync(b) ? b : null;
 }
+
+/** macOS only: rename the generic "Electron" shown in the Dock / Cmd+Tab / menu bar to the app's own name, by patching
+ * the bundled Electron.app's Info.plist (CFBundleName / CFBundleDisplayName only - never the executable name or bundle
+ * identifier, which electronBin()/launch scripts reference by their fixed "Electron.app/.../Electron" path). This is an
+ * UNPACKAGED dev run (no electron-builder/forge step here), so without this the OS shows the raw Electron.app's own
+ * name; a real packaged .app would instead get its name from its own Info.plist. Safe to call every setup run. */
+export function brandElectronMac(name = 'SONIVERSE AI Clipper') {
+  if (!IS_MAC) return true;
+  const plist = path.join(ELECTRON_DIR, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'Info.plist');
+  if (!fs.existsSync(plist)) return false;
+  let s = fs.readFileSync(plist, 'utf8');
+  let changed = false;
+  for (const key of ['CFBundleDisplayName', 'CFBundleName']) {
+    const re = new RegExp(`(<key>${key}</key>\\s*<string>)[^<]*(</string>)`);
+    if (re.test(s)) { s = s.replace(re, `$1${name}$2`); changed = true; }
+  }
+  if (changed) fs.writeFileSync(plist, s);
+  return changed;
+}

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('sv', {
   isElectron: true,
   pickFile: () => ipcRenderer.invoke('pick-file'),
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  pickGguf: () => ipcRenderer.invoke('pick-gguf'),
   pathForFile: (f) => webUtils.getPathForFile(f),
   keyStatus: () => ipcRenderer.invoke('key-status'),
   setKey: (name, value) => ipcRenderer.invoke('set-key', name, value),

@@ -140,7 +140,15 @@ def ai_refine(cfg, plan, h, srcs):
                 model = S["providers"][slot]["model"]
                 if not model:
                     model = PV.pick_gemini(PV.list_models(slot, key)[0])
-                text = _ask_gemini(key, model, system, payload)
+                cands = [model] + [m for m in PV.list_models(slot, key)[0] if "flash" in m and m != model][:2] if not S["providers"][slot]["model"] else [model]
+                text, last = None, None
+                for m_ in cands:                                   # a busy / retired model should not sink the whole attempt
+                    try:
+                        text = _ask_gemini(key, m_, system, payload); break
+                    except PV.PErr as e2:
+                        last = e2
+                        if e2.kind in ("invalid", "rate", "network"): raise
+                if text is None: raise last
             else:
                 base = PV.openai_base(S, slot)
                 model = S["providers"][slot]["model"]
@@ -149,7 +157,7 @@ def ai_refine(cfg, plan, h, srcs):
             settings, note = _parse(text)
         except PV.PErr as e:
             PV.note_fail(cfg, slot, e, key)                      # a rejected / rate-limited key is remembered, like in the normal chain
-            errs.append(f"{src['label']}: " + {"invalid": "key rejected", "rate": "rate limit", "network": "no connection"}.get(e.kind, "error"))
+            errs.append(f"{src['label']}: " + ({"invalid": "key rejected", "rate": "rate limit", "network": "no connection"}.get(e.kind) or str(e)[:160] or "error"))
             continue
         except RuntimeError as e:
             errs.append(f"{src['label']}: {e}")

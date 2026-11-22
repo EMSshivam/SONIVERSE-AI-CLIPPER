@@ -180,7 +180,8 @@ def _ollama_state(cfg):
     m = OL.downloaded(cfg)
     v = OL.version(cfg)
     return {"up": OL.up(cfg), "models": [x["name"] for x in m], "downloaded": m, "installed": bool(OL.find_bin()), "version": v,
-            "old": bool(v) and OL.vtuple(v) < OL.QWEN3VL_MIN, "presets": OL.PRESETS, "qwen3vl_min": ".".join(map(str, OL.QWEN3VL_MIN)), "primary": OL.PRIMARY}
+            "old": bool(v) and OL.vtuple(v) < OL.QWEN3VL_MIN, "presets": OL.PRESETS, "qwen3vl_min": ".".join(map(str, OL.QWEN3VL_MIN)), "primary": OL.PRIMARY,
+            "mac": sys.platform == "darwin"}
 
 
 def _spawn(kind, argv, P, label):
@@ -361,7 +362,13 @@ class H(BaseHTTPRequestHandler):
                 else:
                     code = "import tkinter as t;from tkinter import filedialog as f;r=t.Tk();r.withdraw();r.attributes('-topmost',True);print(f.askopenfilename(title='Pick a video'))"
                 r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
-                return self._send(200, {"path": r.stdout.strip()})
+                path = r.stdout.strip()
+                if r.returncode != 0 and not path:
+                    err = (r.stderr or "").strip()
+                    hint = " (this Python has no Tk/Tcl bindings - the desktop app's own file picker avoids this; in the browser dashboard, use a Python build with tkinter)" if "_tkinter" in err else ""
+                    tail = err.splitlines()[-1][:200] if err else "unknown error"
+                    return self._send(200, {"error": f"Could not open the file picker{hint}: {tail}"})
+                return self._send(200, {"path": path})
         except Exception as e:
             return self._send(500, {"error": str(e)[:300]})
         self._send(404, {"error": "not found"})
@@ -532,8 +539,11 @@ class H(BaseHTTPRequestHandler):
                 if not TS.can_auto_install_ffmpeg(): return self._send(200, {"error": "Install FFmpeg yourself, then restart the app:  " + TS.ffmpeg_install_hint()})
                 return self._send(200, {"id": _spawn("tools", ["tools", "install-ffmpeg"], self.P, "install FFmpeg")})
             if u == "/api/docker/install":
+                from . import supoclip_setup as SS
                 if EN.find_docker(): return self._send(200, {"error": "Docker is already installed."})
-                if not shutil.which("winget"): return self._send(200, {"error": "winget was not found. Install Docker Desktop from docker.com/products/docker-desktop, then restart the app."})
+                if not SS.can_auto_install_docker():
+                    msg = "Homebrew was not found (get it from https://brew.sh)" if sys.platform == "darwin" else "winget was not found"
+                    return self._send(200, {"error": f"{msg}. Install Docker Desktop from docker.com/products/docker-desktop, then restart the app."})
                 return self._send(200, {"id": _spawn("supoclip", ["supoclip", "install-docker"], self.P, "install Docker Desktop")})
             if u == "/api/supoclip/install":
                 S = ST.load(self.cfg)
@@ -546,16 +556,23 @@ class H(BaseHTTPRequestHandler):
             if u == "/api/ollama/install":
                 from . import ollama_ctl as OL
                 if OL.find_bin(): return self._send(200, {"error": "Ollama is already installed."})
-                if not shutil.which("winget"): return self._send(200, {"error": "winget was not found on this PC. Install Ollama from https://ollama.com/download, then press Start Ollama."})
+                if not OL.can_auto_install():
+                    msg = "Homebrew was not found (get it from https://brew.sh)" if sys.platform == "darwin" else "winget was not found on this PC"
+                    return self._send(200, {"error": f"{msg}. Install Ollama from https://ollama.com/download, then press Start Ollama."})
                 return self._send(200, {"id": _spawn("ollama", ["ollama", "install"], self.P, "install Ollama")})
-            if u in ("/api/ollama/pull", "/api/ollama/start"):
+            if u in ("/api/ollama/pull", "/api/ollama/start", "/api/ollama/stop"):
                 from . import ollama_ctl as OL
                 if u.endswith("start"):
                     try: return self._send(200, {"ok": True, "message": OL.start(self.cfg)})
                     except Exception as e: return self._send(200, {"ok": False, "message": redact(str(e))})
+                if u.endswith("stop"):
+                    try: return self._send(200, {"ok": True, "message": OL.stop(self.cfg)})
+                    except Exception as e: return self._send(200, {"ok": False, "message": redact(str(e))})
                 mdl = str(body.get("model") or "").strip()
                 if not OL.valid_name(mdl): return self._send(400, {"error": "Invalid model name (letters, digits, . : / _ - only)."})
-                if not OL.find_bin() and not OL.up(self.cfg): return self._send(200, {"error": "Ollama is not installed. Install it from https://ollama.com/download (or: winget install Ollama.Ollama), then try again."})
+                if not OL.find_bin() and not OL.up(self.cfg):
+                    hint = "brew install ollama" if sys.platform == "darwin" else "winget install Ollama.Ollama"
+                    return self._send(200, {"error": f"Ollama is not installed. Install it from https://ollama.com/download (or: {hint}), then try again."})
                 return self._send(200, {"id": _spawn("ollama", ["ollama", "pull", mdl], self.P, f"download {mdl}")})
             if u == "/api/supoclip/compose":
                 S = ST.load(self.cfg)
@@ -718,7 +735,7 @@ function renderSpecs(H){const el=$('specs');if(!el||!H)return;const row=(k,v,t)=
   +row('Whisper',H.whisper)+(H.disk&&H.disk.output!=null?row('Free disk',H.disk.output+' GB','Free space on the export folder drive'):'')}
 let OPTP=null;
 const optVal=v=>v===''||v===null||v===undefined?'default':String(v);
-async function optStart(useAi){const p=$('optPanel');p.classList.remove('hide');window.scrollTo({top:0,behavior:'smooth'});
+async function optStart(useAi,anchor){const p=$('optPanel');if(anchor&&anchor.closest){const c=anchor.closest('.card');if(c)c.after(p)}p.classList.remove('hide');p.scrollIntoView({behavior:'smooth',block:'nearest'});
  p.innerHTML='<b>Analysing your computer\u2026</b><div class=small style="margin-top:4px">Reading your hardware and working out the best settings'+(useAi===false?'':' (the AI helper may take a few seconds)')+'.</div>';
  let r;try{r=await post('/api/optimize/plan',{ai:useAi!==false})}catch(e){p.innerHTML='<span class=warn>Could not analyse this computer.</span>';return}
  if(r.error){p.innerHTML=`<span class=warn>${esc(r.error)}</span>`;return}OPTP=r;optRender()}
@@ -761,7 +778,7 @@ async function state(){S=await (await fetch('/api/state')).json();renderSpecs(S.
 }
 function pinfo(){const p=S.presets.find(x=>x.id==$('preset').value);$('pinfo').textContent=p?`${p.len[0]}–${p.len[1]}s clips · layout: ${p.mode}`:''}
 const E=window.sv;
-async function browse(){if(E){const p=await E.pickFile();if(p){src.value=p;estUpdate()}return}const r=await (await fetch('/api/browse')).json();if(r.path){src.value=r.path;estUpdate()}}
+async function browse(){if(E){const p=await E.pickFile();if(p){src.value=p;estUpdate()}return}const r=await (await fetch('/api/browse')).json();if(r.path){src.value=r.path;estUpdate()}else if(r.error)toast(r.error,'bad')}
 const dz=$('drop');['dragenter','dragover'].forEach(e=>document.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('on')}));
 ['dragleave','drop'].forEach(e=>document.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('on')}));
 document.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(!f)return;const t=ev.dataTransfer.getData('text');

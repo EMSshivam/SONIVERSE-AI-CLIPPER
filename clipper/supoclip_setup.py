@@ -102,11 +102,79 @@ def install(S, path=None, have_gemini=False, progress=lambda pct, s: None):
     return {"path": str(p), "env_set": done, "whisper": whisper, "frontend": frontend_url(p), "gemini_for_llm": bool(have_gemini)}
 
 
+def can_auto_install_docker():
+    import sys
+    if sys.platform == "darwin":
+        return True                                 # downloads Docker's own .dmg directly - no Homebrew needed
+    return bool(shutil.which("winget") if os.name == "nt" else None)
+
+
+DOCKER_DMG_URL = {"arm64": "https://desktop.docker.com/mac/main/arm64/Docker.dmg",
+                  "x86_64": "https://desktop.docker.com/mac/main/amd64/Docker.dmg"}
+
+
+def _mac_install_docker(progress):
+    """Download Docker Desktop's own official .dmg and place Docker.app in /Applications - the same thing a person
+    does by hand (download, drag to Applications). Deliberately NOT via Homebrew: brew refuses to run as root (and
+    Docker's cask postflight script needs `sudo`, which cannot prompt without a terminal when we run detached), so
+    neither a plain nor an elevated `brew install --cask docker` can be made to work reliably here. /Applications is
+    writable by the admin group without a password (exactly like dragging an app there in Finder), so no elevation
+    is needed for this part at all. Docker Desktop itself asks for your Mac password, in its own window, the first
+    time you open it - that one, standard prompt installs its privileged networking helper."""
+    import platform, tempfile, urllib.request
+    arch = platform.machine()
+    url = DOCKER_DMG_URL.get(arch, DOCKER_DMG_URL["x86_64"])
+    dmg = pathlib.Path(tempfile.gettempdir()) / "SONIVERSE-DockerDesktop.dmg"
+    progress(5, f"downloading Docker Desktop ({arch})")
+    last = [0]
+    def _hook(blocks, bs, total):
+        got = blocks * bs
+        pct = 5 + int(min(1.0, got / total) * 55) if total > 0 else min(55, last[0] + 1)
+        if pct != last[0]:
+            last[0] = pct; progress(pct, f"downloading... {got // 1_000_000} MB" + (f" / {total // 1_000_000} MB" if total > 0 else ""))
+    try:
+        urllib.request.urlretrieve(url, dmg, reporthook=_hook)
+    except Exception as e:
+        raise RuntimeError(f"Could not download Docker Desktop ({e}). Download it yourself from https://www.docker.com/products/docker-desktop/ and open it.")
+    progress(62, "mounting the disk image")
+    mnt = pathlib.Path(tempfile.mkdtemp(prefix="docker_dmg_"))
+    r = subprocess.run(["hdiutil", "attach", str(dmg), "-nobrowse", "-mountpoint", str(mnt)], capture_output=True, text=True)
+    if r.returncode != 0:
+        dmg.unlink(missing_ok=True)
+        raise RuntimeError("Could not mount the downloaded disk image: " + (r.stderr or r.stdout).strip()[:200])
+    try:
+        src = mnt / "Docker.app"
+        if not src.is_dir():
+            raise RuntimeError("Docker.app was not found inside the downloaded disk image - it may be a newer layout. Download it yourself from docker.com/products/docker-desktop and open it.")
+        dst = pathlib.Path("/Applications/Docker.app")
+        progress(78, "copying Docker.app to /Applications (no password needed for this step)")
+        if dst.exists():
+            try:
+                shutil.rmtree(dst)
+            except OSError as e:
+                raise RuntimeError(f"Could not replace the existing /Applications/Docker.app ({e}). Quit Docker Desktop and delete it yourself, then press this button again.")
+        shutil.copytree(src, dst, symlinks=True)
+    finally:
+        subprocess.run(["hdiutil", "detach", str(mnt), "-quiet"], capture_output=True)
+    dmg.unlink(missing_ok=True)
+    progress(92, "opening Docker Desktop for its first-time setup")
+    subprocess.Popen(["open", "-a", str(dst)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    progress(100, "installed - Docker Desktop is opening now: approve ITS password prompt (its own window) to finish setup, then wait for \"Engine running\"")
+    return str(dst)
+
+
 def install_docker(progress=lambda pct, s: None):
-    """Install Docker Desktop with winget. Needs admin (Windows asks you to confirm), WSL2, and often a restart - it cannot do those for you."""
+    """Install Docker Desktop: its own .dmg on macOS (see _mac_install_docker), winget on Windows.
+    Needs admin / a password prompt either way, plus (Windows) WSL2 and often a restart - it cannot do those for you."""
+    import sys
     from . import engines as EN
     if EN.find_docker():
         progress(100, "Docker is already installed"); return EN.find_docker()
+    if sys.platform == "darwin":
+        path = _mac_install_docker(progress)
+        if not EN.find_docker():
+            raise RuntimeError("Docker.app was installed to /Applications, but its CLI is not ready yet. Finish Docker Desktop's own first-run setup window (it just opened), then press this button again.")
+        return EN.find_docker()
     w = shutil.which("winget")
     if not w:
         raise RuntimeError("winget was not found. Install Docker Desktop manually from https://www.docker.com/products/docker-desktop/ then restart the app.")

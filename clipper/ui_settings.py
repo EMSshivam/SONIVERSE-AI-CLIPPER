@@ -31,7 +31,7 @@ HTML = r"""
  <div class=sum id=suSum>Checking this PC&hellip;</div>
  <div class=wrap><div class=card id=setupList style="padding:0"></div></div>
 </section>
-<div id=settingsView>
+<div id=settingsView class=hide>
  <div class=ph><h1>Settings</h1><p>Keys, engines and processing options. Changes save as you make them.</p></div>
  <div class=seg role=tablist><button id=sg_prov class=on role=tab onclick="setPane('prov')">AI providers</button><button id=sg_eng role=tab onclick="setPane('eng')">Engines</button><button id=sg_proc role=tab onclick="setPane('proc')">Processing</button></div>
  <datalist id=oml></datalist>
@@ -51,7 +51,7 @@ HTML = r"""
   <div class=card style="margin-top:14px"><b>Optimize settings (AI helper)</b>
    <div class=small style="margin:6px 0">\u201cOptimize for this computer\u201d can ask an AI to fine-tune your settings. Only your hardware model names are sent (no files, paths or user name). It uses the keys of the providers you add below, in the priority order set there.</div>
    <div class=small id=opt_src_info style="margin-top:6px"></div>
-   <div class=row style="margin-top:10px;gap:8px"><button class=pri onclick="tab('studio');optStart()">Optimize settings for this computer</button></div></div>
+   <div class=row style="margin-top:10px;gap:8px"><button class=pri onclick="optStart(undefined,this)">Optimize settings for this computer</button></div></div>
   <div class=g2 id=provCards style="margin-top:14px"></div>
   <div class=card id=addProv style="margin-top:14px"></div>
   <h2 class=sh>Fallback priority</h2>
@@ -69,7 +69,7 @@ HTML = r"""
  <div class="wrap hide" id=sp_proc>
   <h2 class=sh>Optimize</h2>
   <div class=card><div class=small>Detects this computer and applies the best settings for it (Whisper model, speed vs quality, resolution, parallel exports). An AI helper can fine-tune them using only your hardware model names; without it, built-in rules are used. You see every change before it is applied.</div>
-   <div class=row style="margin-top:10px;gap:8px"><button class=pri onclick="tab('studio');optStart()">Optimize settings for this computer</button><button class=s onclick="optReset()">Restore default settings</button></div></div>
+   <div class=row style="margin-top:10px;gap:8px"><button class=pri onclick="optStart(undefined,this)">Optimize settings for this computer</button><button class=s onclick="optReset()">Restore default settings</button></div></div>
   <h2 class=sh>Folders</h2>
   <div class=small>Where your recordings are read from, where finished clips are written, and where temporary files go. Changes apply immediately (existing projects stay where they are).</div>
   <div class=card id=foldCard style="margin-top:10px"></div>
@@ -114,12 +114,12 @@ function buildProviders(){const slots=AI.slots.map(x=>x.slot);provSig=slots.join
   <div class=lrow>${lk.key?kbtn(lk.key,lk.keyL||'Get an API key'):''}${lk.doc?kbtn(lk.doc,lk.docL||'Limits & pricing'):''}</div>${stp?`<details class=how><summary>How to get a key</summary><div class=small>${stp}</div></details>`:''}
   ${s=='local'?`<label class=chk><input type=checkbox id=lo_ol onchange="aiLocal()">Use Ollama (if running) to score clips</label>
    <div class=lsec><b>Model</b>
-    <div class=g2 style="margin-top:6px"><div><label>Model to use <span class=small>(type any Ollama name to download it)</span></label><input id=lo_om list=oml onchange="aiLocal()" placeholder="qwen3-vl:8b-instruct-q4_K_M"></div>
+    <div class=g2 style="margin-top:6px"><div><label>Model to use <span class=small>(not just Qwen - type <b>any</b> model from Ollama's library here, e.g. llava:7b, gemma3:4b, to download it)</span></label><input id=lo_om list=oml onchange="aiLocal()" placeholder="qwen3-vl:8b-instruct-q4_K_M"></div>
      <div><label>Recommended models</label><select id=lo_pre onchange="aiOllamaPreset(this.value)"></select></div></div>
     <label>Downloaded on this PC</label><select id=lo_sel onchange="aiOllamaPick(this.value)"></select>
     <div class=small id=lo_rec style="margin-top:6px"></div><div class=small id=lo_hint style="margin-top:6px"></div></div>
    <div class=lsec><b>Actions</b>
-    <div class=row style="margin-top:6px;flex-wrap:wrap"><button class=s id=lo_in onclick="aiOllamaInstall()" style="display:none">Install Ollama</button><button class=s onclick="aiOllamaStart()">Start Ollama</button><button class=s id=lo_dl onclick="aiOllamaPull()">Download model</button><button class=s id=lo_gg onclick="aiOllamaFile()">Import .gguf file</button><button class=s onclick="aiTest('local')">Check</button><button class=s onclick=aiLoad()>Refresh list</button></div></div>`:
+    <div class=row style="margin-top:6px;flex-wrap:wrap"><button class=s id=lo_in onclick="aiOllamaInstall()" style="display:none">Install Ollama</button><button class=s id=lo_st onclick="aiOllamaToggle()">Start Ollama</button><button class=s id=lo_dl onclick="aiOllamaPull()">Download model</button><button class=s id=lo_gg onclick="aiOllamaFile()">Import .gguf file</button><button class=s onclick="aiTest('local')">Check</button><button class=s onclick=aiLoad()>Refresh list</button></div></div>`:
   `${keyRow(env)}<label>Model</label><select id="mod_${s}" onchange="aiModel('${s}',this.value)"></select>
    ${(s=='gemini_free'||xs.extra)?`<label>Daily request cap (safety)</label><input id=cap_${s} type=number min=1 onchange="aiCap('${s}',this.value)">`:''}
    <div class=row style="margin-top:8px"><button class=s onclick="aiTest('${s}')">Test connection</button><button class=s onclick="aiReset('${s}')">Clear errors</button>${xs.extra?`<button class=s onclick="provDel('${s}')">Remove provider</button>`:''}</div>`}
@@ -148,20 +148,31 @@ function renderProviders(){if(!$('pc_local')||provSig!==AI.slots.map(x=>x.slot).
 function ollamaPaint(P){const O=AI.ollama,D=O.downloaded||[],cur=P.ollama_model,have=D.find(m=>m.name==cur);
  $('lo_sel').innerHTML=(D.length?'':`<option value="">${O.up?'no models downloaded yet':'Ollama is not running'}</option>`)+D.map(m=>`<option value="${esc(m.name)}" ${m.name==cur?'selected':''}>${esc(m.name)} \u00b7 ${m.size_gb} GB${m.vision?' \u00b7 vision':''}</option>`).join('')+(cur&&!have&&D.length?`<option value="${esc(cur)}" selected>${esc(cur)} (not downloaded)</option>`:'');
  $('lo_in').style.display=O.installed?'none':'';
+ $('lo_st').textContent=O.up?'Stop Ollama':'Start Ollama';$('lo_st').disabled=!O.installed;
  const PR=O.presets||[],inPr=PR.some(x=>x.name==cur);
- $('lo_pre').innerHTML=`<option value="" ${inPr?'':'selected'}>${inPr?'other (custom model)':'choose a recommended model…'}</option>`+PR.map(x=>`<option value="${esc(x.name)}" ${x.name==cur?'selected':''}>${esc(x.label)}${(AI.gpu.recommend&&AI.gpu.recommend.ollama&&AI.gpu.recommend.ollama.model==x.name)?' \u2605 recommended for this PC':''}${D.find(m=>m.name==x.name)?' \u00b7 downloaded':''}</option>`).join('');{const r=AI.gpu.recommend||{},ro=r.ollama;$('lo_rec').innerHTML=ro?`\u2605 For this computer we suggest <b>${esc(ro.model)}</b> (~${ro.size_gb} GB): ${esc(ro.reason)}.`:esc(r.ollama_note||'')}
+ {const opt=x=>`<option value="${esc(x.name)}" ${x.name==cur?'selected':''}>${esc(x.label)}${(AI.gpu.recommend&&AI.gpu.recommend.ollama&&AI.gpu.recommend.ollama.model==x.name)?' \u2605 recommended for this PC':''}${D.find(m=>m.name==x.name)?' \u00b7 downloaded':''}</option>`,
+  qw=PR.filter(x=>/^qwen/i.test(x.name)),ot=PR.filter(x=>!/^qwen/i.test(x.name));
+  $('lo_pre').innerHTML=`<option value="" ${inPr?'':'selected'}>${inPr?'other (custom model - type its name on the left)':'choose a model to download…'}</option>`
+   +(qw.length?`<optgroup label="Qwen (recommended)">${qw.map(opt).join('')}</optgroup>`:'')
+   +(ot.length?`<optgroup label="Other vision models">${ot.map(opt).join('')}</optgroup>`:'')}
+ {const r=AI.gpu.recommend||{},ro=r.ollama;$('lo_rec').innerHTML=ro?`\u2605 For this computer we suggest <b>${esc(ro.model)}</b> (~${ro.size_gb} GB): ${esc(ro.reason)}.`:esc(r.ollama_note||'')}
  $('lo_dl').textContent=have?`Update ${cur}`:`Download ${cur||'model'}`;$('lo_dl').disabled=!cur;
- $('lo_hint').innerHTML=!O.up&&!O.installed?'<span class=warn>Ollama is not installed</span> - press <b>Install Ollama</b> (uses winget, large download, normally no admin needed) or get it from ollama.com/download.'
+ $('lo_hint').innerHTML=!O.up&&!O.installed?`<span class=warn>Ollama is not installed</span> - press <b>Install Ollama</b> (uses ${O.mac?'Homebrew':'winget'}, large download, normally no admin needed) or get it from ollama.com/download.`
   :!O.up?'Ollama is installed but not running - press <b>Start Ollama</b> (Download starts it for you too).'
-  :O.version&&/^qwen3-vl/i.test(cur||'')&&O.old?`<span class=warn>Ollama ${esc(O.version)} is too old for Qwen3-VL (needs ${esc(O.qwen3vl_min)}+)</span> - update Ollama (winget upgrade Ollama.Ollama).`
+  :O.version&&/^qwen3-vl/i.test(cur||'')&&O.old?`<span class=warn>Ollama ${esc(O.version)} is too old for Qwen3-VL (needs ${esc(O.qwen3vl_min)}+)</span> - update Ollama (${O.mac?'brew upgrade ollama':'winget upgrade Ollama.Ollama'}).`
   :!have?`<span class=warn>${esc(cur)} is not downloaded yet</span> - press Download (progress shows below).`
   :have.vision===false?'Not a vision model: fine for text scoring; frame analysis (tick below under Processing) needs a vision model such as qwen2.5vl:7b.':''}
-async function aiOllamaPreset(v){if(!v)return;$('lo_om').value=v;await aiLocal()}
+async function aiOllamaPreset(v){const el=$('lo_om');if(!v){el.focus();el.select();return}el.value=v;await aiLocal()}
 async function aiOllamaFile(){const m=$('tm_local');m.className='msg';m.textContent='choose a .gguf file in the window that opened\u2026';
- const r=await (await fetch('/api/browse?kind=gguf')).json();if(!r.path){m.textContent='';return}
- await ollamaJob(await post('/api/ollama/import',{path:r.path}),'Imported - it is now the selected model (check the "vision" tag in the list; text-only imports cannot read frames).','Import failed','lo_gg')}
+ let path;
+ if(E&&E.pickGguf){path=await E.pickGguf()}
+ else{const r=await (await fetch('/api/browse?kind=gguf')).json();if(r.error){m.className='msg warn';m.textContent=r.error;return}path=r.path}
+ if(!path){m.textContent='';return}
+ await ollamaJob(await post('/api/ollama/import',{path}),'Imported - it is now the selected model (check the "vision" tag in the list; text-only imports cannot read frames).','Import failed','lo_gg')}
 async function aiOllamaPick(v){if(!v)return;$('lo_om').value=v;await aiLocal()}
 async function aiOllamaStart(){const m=$('tm_local');m.textContent='starting Ollama\u2026';m.className='msg';const r=await post('/api/ollama/start',{});m.textContent=r.message||r.error||'';m.className='msg '+(r.ok?'ok':'warn');aiLoad()}
+async function aiOllamaToggle(){const up=AI.ollama&&AI.ollama.up,m=$('tm_local');m.textContent=up?'stopping Ollama\u2026':'starting Ollama\u2026';m.className='msg';
+ const r=await post(up?'/api/ollama/stop':'/api/ollama/start',{});m.textContent=r.message||r.error||'';m.className='msg '+(r.ok?'ok':'warn');aiLoad()}
 async function ollamaJob(r,okMsg,failMsg,btn,mid){const m=$(mid||'tm_local');if(r.error){m.className='msg warn';m.textContent=r.error;return}
  $(btn).disabled=true;
  for(;;){await new Promise(z=>setTimeout(z,1500));const j=await (await fetch('/api/job?id='+r.id)).json();m.className='msg';m.textContent=`${j.stage||'working'} (${j.pct}%)`;
@@ -204,11 +215,12 @@ function renderEngine(){const H_=AI.settings.highlight_engine,R_=AI.settings.ref
  <div class=chk><input type=checkbox id=sc_lic ${S_.ack_license?'checked':''} onchange="aiSupo()"><span>I am a single creator using my own copy for my own channels (or noncommercial use)</span></div>
  <label>SupoClip folder (cloned outside this app)</label><input id=sc_path value="${esc(S_.path)}" onchange="aiSupo()" placeholder="C:\\Tools\\supoclip">
  <label>Backend URL (localhost only)</label><input id=sc_url value="${esc(S_.url)}" onchange="aiSupo()">
- <label>SupoClip LLM (picks the moments)</label><select id=sc_llm onchange="aiSupo()"><option value=env_file ${S_.llm_source!='gemini_free'?'selected':''}>whatever SupoClip's own .env says (its default needs an OpenRouter key)</option><option value=gemini_free ${S_.llm_source=='gemini_free'?'selected':''}>My Gemini Free key (given to Docker only when you press Start, never written to a file)</option></select>
+ <label>SupoClip LLM (picks the moments)</label><select id=sc_llm onchange="aiSupo()"><option value=env_file ${S_.llm_source!='gemini_free'?'selected':''}>whatever SupoClip's own .env says (its default needs an OpenRouter key)</option><option value=gemini_free ${S_.llm_source=='gemini_free'?'selected':''}>My Gemini key - Paid if switched on below, else Free, whichever currently works (given to Docker only when you press Start, never written to a file)</option></select>
+ <div class=small style="margin-top:4px">SupoClip's own code only understands Gemini / OpenAI / Anthropic / OpenRouter / local Ollama as its LLM - not Groq - so that is as far as this fallback can reach.</div>
  <div class=chk><input type=checkbox id=sc_lw ${S_.local_whisper_configured?'checked':''} onchange="aiSupo()"><span>My SupoClip is configured for local Whisper (no AssemblyAI)</span></div>
  <div class=chk><input type=checkbox id=sc_ca ${S_.ack_cloud_audio?'checked':''} onchange="aiSupo()"><span>Allow SupoClip to upload this audio to AssemblyAI (cloud)</span></div>
  <div class=g2><div><b>AssemblyAI key</b> <span class=small>(optional - not needed with local Whisper)</span>${keyRow(AI.keyEnv.assemblyai)}</div><div><b>SupoClip API key</b>${keyRow(AI.keyEnv.supoclip)}</div></div>
- <div class=row style="margin-top:8px"><button class=s id=sc_in onclick="aiSupoInstall()">Install SupoClip</button>${sc.docker?(sc.docker_running?'':'<button class=s id=sc_dd onclick="aiDockerStart()">Start Docker Desktop</button>'):'<button class=s id=sc_dk onclick="aiDockerInstall()">Install Docker Desktop</button>'}<button class=s onclick="aiCompose('up')">Start SupoClip (docker compose up)</button><button class=s onclick="aiCompose('down')">Stop</button><button class=s onclick="aiSupoOpen()">Open SupoClip</button><button class=s onclick=aiLoad()>Re-check</button></div><div class=msg id=sc_msg></div></details>`;
+ <div class=row style="margin-top:8px"><button class=s id=sc_in onclick="aiSupoInstall()">${sc.installed?'Reinstall SupoClip':'Install SupoClip'}</button>${sc.docker?(sc.docker_running?'':'<button class=s id=sc_dd onclick="aiDockerStart()">Start Docker Desktop</button>'):'<button class=s id=sc_dk onclick="aiDockerInstall()">Install Docker Desktop</button>'}<button class=s onclick="aiCompose('up')">Start SupoClip (docker compose up)</button><button class=s onclick="aiCompose('down')">Stop</button><button class=s onclick="aiSupoOpen()">Open SupoClip</button><button class=s onclick=aiLoad()>Re-check</button></div><div class=msg id=sc_msg></div></details>`;
  $('rfCard').innerHTML=opt('rf','aiRF',R_,'openclipper','OpenClipper (AI Smart Reframing)','OpenClipper\u2019s subject tracking + AutoFlip camera keep the main person or vehicle in the 9:16 crop, on your GPU. Works with Local AI or SupoClip highlights; keeps SONIVERSE presets, captions, effects, facecam layouts and CapCut export.')+
  opt('rf','aiRF',R_,'static','Static Crop','The plain SONIVERSE crop (coarse horizontal motion following only). No subject detection. Fastest.')+
  opt('rf','aiRF',R_,'auto','Auto','OpenClipper when it is installed and ready, otherwise the Static Crop.')+
@@ -260,8 +272,10 @@ async function suAll(){const m=$('su_all_m');m.className='msg';m.textContent='st
 async function suPull(){const mdl=AI.settings.providers.local.ollama_model;await suJob('/api/ollama/pull',{model:mdl},'Downloaded '+mdl+'.','Download failed','su_ol','su_ol_m')}
 async function suMsg(r,mid){await aiLoad();const m=$(mid);if(m){m.textContent=r.message||r.error||'';m.className='msg '+(r.ok?'ok':'warn')}}
 async function suOllamaStart(){$('su_ol_m').textContent='starting Ollama\u2026';await suMsg(await post('/api/ollama/start',{}),'su_ol_m')}
+async function suOllamaStop(){$('su_ol_m').textContent='stopping Ollama\u2026';await suMsg(await post('/api/ollama/stop',{}),'su_ol_m')}
 async function suDockerStart(){$('su_sc_m').textContent='starting Docker Desktop\u2026';await suMsg(await post('/api/docker/start',{}),'su_sc_m')}
 async function suOpen(){const r=await post('/api/supoclip/open',{});if(r.url)toast('Opened '+r.url,'good');else toast(r.error||'Could not open SupoClip','bad')}
+async function goPickModel(){tab('settings');setPane('prov');await aiLoad();const el=$('lo_om');if(el){el.focus();el.select();el.scrollIntoView({behavior:'smooth',block:'center'})}}
 function suRow(st,t,tag,d,act,mid){const ic={ok:'\u2713',warn:'!',bad:'\u00d7',opt:'\u2013'}[st],w={ok:'OK',warn:'Needs attention',bad:'Missing',opt:'Optional'}[st];
  return `<div class="srow st-${st}"><span class=sic aria-hidden=true>${ic}</span><div class=sbody><div><b>${t}</b><span class=stag>${tag}</span><span class=sr> ${w}</span></div><div class=small>${d}</div><div class=msg id="${mid}"></div></div><div class=sact>${act||''}</div></div>`}
 function renderSetup(){if(!AI||!$('setupList'))return;
@@ -272,9 +286,9 @@ function renderSetup(){if(!AI||!$('setupList'))return;
  let st,d,act='';
  if(!O.up&&!O.installed){st='opt';d='Not installed. Local AI still scores clips without it; Ollama adds a vision model that looks at frames.';act=sbtn('su_ol','Install Ollama',"suJob('/api/ollama/install',{},'Ollama installed. Now press Start Ollama.','Install failed','su_ol','su_ol_m')")}
  else if(!O.up){st='warn';d='Installed, but not running.';act=sbtn('su_ol','Start Ollama','suOllamaStart()')}
- else if(/^qwen3-vl/i.test(cur||'')&&O.old){st='warn';d=`Ollama ${esc(O.version)} is too old for ${esc(cur)} (needs ${esc(O.qwen3vl_min)} or newer). Update it with: winget upgrade Ollama.Ollama`}
- else if(!have){st='warn';d=`Running. The selected model ${esc(cur)} is not downloaded yet.`;act=sbtn('su_ol','Download model','suPull()')}
- else{st='ok';d=`Running. ${esc(cur)} is ready${have.vision===false?' (text only, no frame analysis)':''}.`}
+ else if(/^qwen3-vl/i.test(cur||'')&&O.old){st='warn';d=`Ollama ${esc(O.version)} is too old for ${esc(cur)} (needs ${esc(O.qwen3vl_min)} or newer). Update it with: ${O.mac?'brew upgrade ollama':'winget upgrade Ollama.Ollama'}`}
+ else if(!have){st='warn';d=`Running. The selected model ${esc(cur)} is not downloaded yet.`;act=sbtn('su_ol','Download model','suPull()')+sbtn('su_olc','Change model','goPickModel()')}
+ else{st='ok';d=`Running. ${esc(cur)} is ready${have.vision===false?' (text only, no frame analysis)':''}.`;act=sbtn('su_ol','Stop Ollama','suOllamaStop()')+sbtn('su_olc','Change model','goPickModel()')}
  R.push(['ol',st,suRow(st,'Local AI model (Ollama)','Optional',d,act,'su_ol_m')]);
  let os_,od,oa='';
  if(oc.available){os_='ok';od=`Ready. Tracking runs on ${esc(oc.gpu_provider||'the CPU')}.`}
@@ -283,8 +297,8 @@ function renderSetup(){if(!AI||!$('setupList'))return;
  R.push(['oc',os_,suRow(os_,'Smart reframing (OpenClipper)','Recommended',od,oa,'su_oc_m')]);
  let ss,sd,sa='';
  if(sc.available){ss='ok';sd='Running and ready.'}
- else{ss='opt';sd=(!sc.docker?'Docker Desktop is not installed.':!sc.docker_running?'Docker Desktop is installed but not running.':'Docker is running.')+' Local AI works fine without SupoClip.'+((sc.reasons||[]).length?`<details><summary>What is missing</summary><ul>${sc.reasons.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:'');
-  sa=(!sc.docker?sbtn('su_dk','Install Docker Desktop',"suJob('/api/docker/install',{},'Docker Desktop installed. Restart Windows if it asked, then start Docker Desktop.','Docker install failed','su_dk','su_sc_m')"):(!sc.docker_running?sbtn('su_dd','Start Docker Desktop','suDockerStart()'):''))+sbtn('su_in','Install SupoClip',"suJob('/api/supoclip/install',{},'SupoClip prepared. Start Docker, then open SupoClip to create your API key.','Install failed','su_in','su_sc_m')")+(sc.backend_up?sbtn('su_op','Open SupoClip','suOpen()'):'')}
+ else{ss='opt';sd=(!sc.docker?'Docker Desktop is not installed.':!sc.docker_running?'Docker Desktop is installed but not running.':sc.installed?'SupoClip is installed and Docker is running - a few things are still needed before it can be used:':'Docker is running.')+' Local AI works fine without SupoClip.'+((sc.reasons||[]).length?`<details><summary>What is missing</summary><ul>${sc.reasons.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:'');
+  sa=(!sc.docker?sbtn('su_dk','Install Docker Desktop',"suJob('/api/docker/install',{},'Docker Desktop installed. Open it once from Applications/Launchpad (Mac) or restart Windows if it asked, then start Docker Desktop.','Docker install failed','su_dk','su_sc_m')"):(!sc.docker_running?sbtn('su_dd','Start Docker Desktop','suDockerStart()'):''))+sbtn('su_in',sc.installed?'Reinstall SupoClip':'Install SupoClip',"suJob('/api/supoclip/install',{},'SupoClip prepared. Start Docker, then open SupoClip to create your API key.','Install failed','su_in','su_sc_m')")+(sc.backend_up?sbtn('su_op','Open SupoClip','suOpen()'):'')}
  R.push(['sc',ss,suRow(ss,'SupoClip highlights (Docker)','Optional',sd,sa,'su_sc_m')]);
  const names=Object.entries(AI.keyEnv).filter(([k,e])=>AI.keys[e]).map(([k])=>lbl(k));
  R.push(['key',names.length?'ok':'opt',suRow(names.length?'ok':'opt','Cloud AI keys','Optional',names.length?`Saved: ${esc(names.join(', '))}. A provider still has to be switched on in Settings.`:'No keys saved. Local AI is used for everything.',`<button class=s onclick="tab('settings');setPane('prov')">Open AI providers</button>`,'su_key_m')]);
@@ -335,7 +349,7 @@ async function aiSupo(){await aiPost({supoclip:{ack_license:$('sc_lic').checked,
 async function aiSupoInstall(){const m=$('sc_msg');m.className='msg';m.textContent='starting install\u2026';
  await ollamaJob(await post('/api/supoclip/install',{}),'SupoClip prepared. Next: start Docker Desktop, press Start SupoClip, then Open SupoClip to create your API key.','Install failed','sc_in','sc_msg')}
 async function aiDockerInstall(){const m=$('sc_msg');m.className='msg';m.textContent='starting Docker Desktop install\u2026 approve the Windows admin prompt';
- await ollamaJob(await post('/api/docker/install',{}),'Docker Desktop installed. Restart Windows if it asked, start Docker Desktop (wait for "Engine running"), then press Start SupoClip.','Docker install failed','sc_dk','sc_msg')}
+ await ollamaJob(await post('/api/docker/install',{}),'Docker Desktop installed. Open it once from Applications/Launchpad (Mac) or restart Windows if it asked, then wait for "Engine running" before pressing Start SupoClip.','Docker install failed','sc_dk','sc_msg')}
 async function aiDockerStart(){const r=await post('/api/docker/start',{});$('sc_msg').className='msg '+(r.ok?'ok':'warn');$('sc_msg').textContent=r.message||r.error||''}
 async function aiFfmpegInstall(){const m=$('oc_msg');m.className='msg';m.textContent='starting FFmpeg install\u2026';
  await ollamaJob(await post('/api/tools/ffmpeg',{}),'FFmpeg installed. If a step still says "ffmpeg not found", close and reopen the app once.','FFmpeg install failed','oc_ff','oc_msg')}

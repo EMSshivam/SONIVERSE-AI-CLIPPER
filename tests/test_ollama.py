@@ -5,6 +5,8 @@ import json, os, pathlib, stat, subprocess, sys, tempfile, threading, time, urll
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _pm_guard; _pm_guard.guard()   # never let install() shell out to a REAL brew/winget, even if a PATH-scoping bug slips in
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="svol_"))
 FAILS = []
 def check(n, c, x=""):
@@ -92,32 +94,33 @@ check("start() when already running is a no-op", OL.start(cfg2) == "Ollama is al
 subprocess.run(["pkill", "-f", f"127.0.0.1',{port}"], check=False)
 os.environ["PATH"] = old_path
 
-# install via a FAKE winget (prints progress, then drops a fake ollama binary into PATH)
+# install via a FAKE package manager (winget on Windows, brew on macOS; prints progress, then drops a fake ollama binary into PATH).
+# PATH is replaced WHOLESALE here (never old_path / the real PATH), so this can never fall through to a REAL brew/winget that
+# happens to be installed on the machine running the tests (a dev Mac with Homebrew, for instance).
+PM = "brew" if sys.platform == "darwin" else "winget"
 wdir = TMP / "wbin"; wdir.mkdir(); target = TMP / "installed"; target.mkdir()
-(wdir / "winget").write_text("#!/bin/sh\necho 'Found Ollama [Ollama.Ollama]'\necho '  40%'\necho '  100%'\nprintf '#!/bin/sh\\nexit 0\\n' > " + str(target / "ollama") + "\nchmod +x " + str(target / "ollama") + "\necho Successfully installed\n")
-(wdir / "winget").chmod(0o755)
-os.environ["PATH"] = f"{wdir}:{old_path}"
+(wdir / PM).write_text("#!/bin/sh\necho 'Found Ollama [Ollama.Ollama]'\necho '  40%'\necho '  100%'\nprintf '#!/bin/sh\\nexit 0\\n' > " + str(target / "ollama") + "\nchmod +x " + str(target / "ollama") + "\necho Successfully installed\n")
+(wdir / PM).chmod(0o755)
+os.environ["PATH"] = str(wdir)
 prog2 = []
 check("install: not installed before", OL.find_bin() is None)
-os.environ["PATH"] = f"{wdir}:{target}:{old_path}"   # (target joins PATH, as the real installer does)
-os.environ["PATH"] = f"{wdir}:{old_path}"
 import shutil as _sh
 _real_which = _sh.which
 _sh.which = lambda n, *a, **k: str(target / "ollama") if n == "ollama" and (target / "ollama").exists() else _real_which(n, *a, **k)
 b = OL.install(lambda p, s: prog2.append((p, s)))
-check("install: runs winget with progress and ends installed", b == str(target / "ollama") and prog2[-1] == (100, "installed") and any("winget:" in s for _, s in prog2), prog2)
+check(f"install: runs {PM} with progress and ends installed", b == str(target / "ollama") and prog2[-1] == (100, "installed") and any(f"{PM}:" in s for _, s in prog2), prog2)
 check("install: already installed -> no-op", OL.install()  == str(target / "ollama"))
 (target / "ollama").unlink()
-(wdir / "winget").write_text("#!/bin/sh\necho 'No package found matching input criteria.'\nexit 1\n"); (wdir / "winget").chmod(0o755)
+(wdir / PM).write_text("#!/bin/sh\necho 'No package found matching input criteria.'\nexit 1\n"); (wdir / PM).chmod(0o755)
 try:
-    OL.install(); check("install: winget failure is surfaced", False)
+    OL.install(); check(f"install: {PM} failure is surfaced", False)
 except RuntimeError as e:
-    check("install: winget failure is surfaced", "winget install failed" in str(e) and "No package" in str(e), e)
-(wdir / "winget").unlink()
+    check(f"install: {PM} failure is surfaced", f"{PM} install failed" in str(e) and "No package" in str(e), e)
+(wdir / PM).unlink()
 try:
-    OL.install(); check("install: no winget -> manual-install hint", False)
+    OL.install(); check(f"install: no {PM} -> manual-install hint", False)
 except RuntimeError as e:
-    check("install: no winget -> manual-install hint", "ollama.com/download" in str(e), e)
+    check(f"install: no {PM} -> manual-install hint", "ollama.com/download" in str(e), e)
 _sh.which = _real_which
 os.environ["PATH"] = old_path
 

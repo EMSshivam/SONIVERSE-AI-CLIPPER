@@ -205,9 +205,26 @@ def electron_binary(root):
     return b if b.exists() else None
 
 
+def brand_electron_mac(root):
+    """macOS only: the Dock / Cmd+Tab / menu bar otherwise shows the raw downloaded Electron.app's own name ("Electron"),
+    since this is an unpackaged dev-style run (no electron-builder/forge step here) - patch its Info.plist's display-name
+    keys only (never CFBundleExecutable or the bundle folder name, which electron_binary() above references by their
+    fixed path). Safe to call every time; a no-op once already patched."""
+    if plat()[0] != "darwin":
+        return
+    plist = root / "electron" / "node_modules" / "electron" / "dist" / "Electron.app" / "Contents" / "Info.plist"
+    if not plist.is_file():
+        return
+    text = plist.read_text(encoding="utf-8")
+    for key in ("CFBundleDisplayName", "CFBundleName"):
+        text = re.sub(r"(<key>%s</key>\s*<string>)[^<]*(</string>)" % re.escape(key), r"\g<1>SONIVERSE AI Clipper\g<2>", text)
+    plist.write_text(text, encoding="utf-8")
+
+
 def ensure_electron(root):
     if electron_binary(root):
         say("Electron (desktop window): already installed")
+        brand_electron_mac(root)
         return True
     pkg = json.loads((root / "electron" / "package.json").read_text(encoding="utf-8"))
     ver = re.sub(r"^[^\d]*", "", str(pkg.get("devDependencies", {}).get("electron", "45.4.1")))
@@ -233,6 +250,8 @@ def ensure_electron(root):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     ok = electron_binary(root) is not None
+    if ok:
+        brand_electron_mac(root)
     say("Electron: ready" if ok else "Electron: could not be set up - the browser dashboard still works (run.sh web / run.ps1 web)")
     return ok
 

@@ -132,7 +132,7 @@ DEFAULTS = {
     "spend": {"per_run_inr": 50, "monthly_inr": 500, "inr_per_usd": 95,
               "est_usd_per_mtok_in": 0.30, "est_usd_per_mtok_out": 2.50},   # editable ESTIMATES, not Google's price list
     "supoclip": {"path": "", "url": "http://127.0.0.1:8000", "ack_license": False, "ack_cloud_audio": False,
-                 "local_whisper_configured": False, "llm_source": "env_file"},
+                 "local_whisper_configured": True, "llm_source": "env_file"},   # install() defaults SupoClip's own .env to local Whisper too (no AssemblyAI key -> TRANSCRIPTION_PROVIDER=whisper), so this starts in sync with that
     "openclipper": {"device": "auto", "hero_lock": True},           # device: auto = DirectML/CUDA if present else CPU
 }
 
