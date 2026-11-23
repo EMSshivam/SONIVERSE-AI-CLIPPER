@@ -19,6 +19,7 @@ bin_ = TMP / "bin"; bin_.mkdir()
 (bin_ / "git").write_text("#!" + sys.executable + '''
 import sys, pathlib
 a = sys.argv[1:]
+if "clone" not in a: sys.exit(0)      # the pinned-commit fetch/checkout steps
 dest = pathlib.Path(a[-1]); dest.mkdir(parents=True, exist_ok=True)
 print("Cloning into", dest); print("remote: Counting objects:  50%", flush=True); print("Receiving objects: 100% (999/999)")
 (dest / "docker-compose.yml").write_text("services: {}\\n")
