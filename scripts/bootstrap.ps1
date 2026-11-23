@@ -22,17 +22,17 @@ Say "1/4  Python (private copy, nothing is installed system-wide)"
 $tools = Join-Path $Root "tools"; $uvDir = Join-Path $tools "uv"; $uv = Join-Path $uvDir "uv.exe"
 if (-not (Test-Path $uv)) {
   $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
-  $name = "uv-$arch-pc-windows-msvc.zip"; $base = "https://github.com/astral-sh/uv/releases/latest/download"
+  # Pinned release + SHA256 written here (not fetched from the same server as the zip), so a tampered download is always rejected.
+  $uvVersion = "0.13.9"
+  $uvHash = @{ "x86_64" = "edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb"; "aarch64" = "72eed595983a4d7d22d79f21065b0f4479cc7e5c7a89104bb410c8f47559a878" }
+  $name = "uv-$arch-pc-windows-msvc.zip"; $base = "https://github.com/astral-sh/uv/releases/download/$uvVersion"
   New-Item -ItemType Directory -Force -Path $uvDir | Out-Null
   $zip = Join-Path $env:TEMP $name
-  Write-Host "Downloading uv ($name) ..."
+  Write-Host "Downloading uv $uvVersion ($name) ..."
   try { Invoke-WebRequest "$base/$name" -OutFile $zip -UseBasicParsing } catch { Fail "Could not download uv. Check your internet connection / proxy, then run this again.`n$_" }
-  try {
-    $want = ((New-Object Net.WebClient).DownloadString("$base/$name.sha256") -split "\s+")[0].Trim()
-    $got = (Get-FileHash $zip -Algorithm SHA256).Hash
-    if ($want -and ($want -ne $got)) { Remove-Item $zip -Force; Fail "uv download failed its checksum - try again." }
-    Write-Host "uv: SHA256 checksum OK"
-  } catch { Write-Host "uv: no checksum published - relying on HTTPS" -ForegroundColor Yellow }
+  $got = (Get-FileHash $zip -Algorithm SHA256).Hash
+  if ($got -ne $uvHash[$arch]) { Remove-Item $zip -Force; Fail "uv download failed its SHA256 check - not installing it. Try again." }
+  Write-Host "uv: SHA256 checksum OK"
   Expand-Archive -Path $zip -DestinationPath $uvDir -Force; Remove-Item $zip -Force
   if (-not (Test-Path $uv)) { $f = Get-ChildItem $uvDir -Recurse -Filter uv.exe | Select-Object -First 1; if ($f) { Move-Item $f.FullName $uv -Force } }
   if (-not (Test-Path $uv)) { Fail "uv.exe was not found in the download." }

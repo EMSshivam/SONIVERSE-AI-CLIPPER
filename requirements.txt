@@ -1,13 +1,15 @@
+# Bounded ranges (next major version is excluded) so a surprise breaking release cannot sneak into a fresh install, while every
+# platform (Windows, Apple-silicon / Intel Mac, Linux) can still find a matching wheel. Exact pins would break some of them.
 numpy>=1.26,<2.3
-scipy>=1.11
+scipy>=1.11,<2
 opencv-python-headless>=4.10,<5
-pyyaml>=6
-pillow>=10
-indic-transliteration>=2.3
-yt-dlp
-faster-whisper>=1.1
+pyyaml>=6,<7
+pillow>=10,<14
+indic-transliteration>=2.3,<3
+yt-dlp>=2026.10.26,<2027   # kept as a range on purpose: download sites change often and old yt-dlp stops working
+faster-whisper>=1.1,<2
 av>=14,<16            # PyAV 19 dropped an argument faster-whisper 1.x still passes (metadata_errors) -> keep below 16
-scenedetect>=0.6.4
-mediapipe>=0.10
+scenedetect>=0.6.4,<0.8
+mediapipe>=0.10,<2
 
 tzdata

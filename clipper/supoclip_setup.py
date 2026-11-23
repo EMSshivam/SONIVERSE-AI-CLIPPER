@@ -5,6 +5,9 @@ import os, pathlib, re, secrets, shutil, subprocess
 from .util import ROOT
 
 REPO = "https://github.com/FujiwaraChoki/supoclip.git"
+# SupoClip is third-party code that runs in Docker on the user's PC, so we install one specific commit, never "whatever is newest".
+# To update: review upstream, then replace this hash (git ls-remote REPO HEAD).
+PINNED_COMMIT = "9fba78399dd3bde7d6307e0736802fd51000bcd7"
 PLACEHOLDER = {"BACKEND_AUTH_SECRET": "change_me_backend_auth_secret",
                "APP_SETTINGS_ENCRYPTION_KEY": "change_me_settings_encryption_secret",
                "BETTER_AUTH_SECRET": "supoclip_dev_secret_change_in_production"}
@@ -80,7 +83,7 @@ def install(S, path=None, have_gemini=False, progress=lambda pct, s: None):
         p.parent.mkdir(parents=True, exist_ok=True)
         progress(3, "cloning SupoClip")
         kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
-        pr = subprocess.Popen([git, "clone", "--depth", "1", "--progress", REPO, str(p)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        pr = subprocess.Popen([git, "clone", "--depth", "1", "--no-checkout", "--progress", REPO, str(p)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", **kw)
         pct, tail = 5, []
         for line in pr.stdout:
@@ -92,8 +95,15 @@ def install(S, path=None, have_gemini=False, progress=lambda pct, s: None):
             if m:
                 pct = max(pct, min(55, 3 + int(int(m.group(1)) * 0.52)))
             progress(pct, "git: " + line[:80])
-        if pr.wait() != 0 or not (p / "docker-compose.yml").is_file():
+        if pr.wait() != 0:
             raise RuntimeError("git clone failed: " + " | ".join(tail)[:300])
+        progress(57, f"checking out the pinned SupoClip version ({PINNED_COMMIT[:8]})")
+        for step in (["fetch", "--depth", "1", "origin", PINNED_COMMIT], ["checkout", "--detach", "FETCH_HEAD"]):
+            r = subprocess.run([git, "-C", str(p), *step], capture_output=True, text=True, encoding="utf-8", errors="replace", **kw)
+            if r.returncode != 0:
+                raise RuntimeError(f"Could not check out SupoClip commit {PINNED_COMMIT[:8]}: " + (r.stderr or r.stdout).strip()[-250:])
+        if not (p / "docker-compose.yml").is_file():
+            raise RuntimeError("git clone failed: docker-compose.yml is missing from the SupoClip checkout")
     progress(65, "writing .env (generated secrets, no API keys)")
     # local Whisper unless the user explicitly allowed AssemblyAI cloud transcription
     whisper = not (sc.get("ack_cloud_audio") and os.environ.get("ASSEMBLYAI_API_KEY"))
