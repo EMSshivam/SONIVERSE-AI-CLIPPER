@@ -141,7 +141,20 @@ def cmd_analyze(args, cfg):
     presets = load_presets()
     if args.preset not in presets:
         raise SystemExit(f"unknown preset '{args.preset}'. Available: {', '.join(presets)}")
-    preset = presets[args.preset]
+    preset = dict(presets[args.preset])
+    if getattr(args, "layout", None) and args.layout != "auto":      # the user's choice always wins over the preset
+        preset["layout_mode"] = args.layout
+        log(f"layout forced by you: {args.layout} for every clip")
+    if getattr(args, "clip_len", None):
+        try:
+            lo, hi = (float(x) for x in str(args.clip_len).replace(" ", "").split("-"))
+        except ValueError:
+            raise SystemExit("--clip-len must look like 30-120 (seconds)")
+        lo, hi = max(5.0, min(lo, hi)), min(180.0, max(lo, hi))
+        preset["clip_len"] = [lo, max(hi, lo + 3)]
+        log(f"clip length set by you: {preset['clip_len'][0]:.0f}-{preset['clip_len'][1]:.0f}s")
+    if getattr(args, "face_panel", None):
+        cfg["output"]["face_panel"] = min(0.6, max(0.15, float(args.face_panel)))
     kw = load_keywords(preset)
     stage("importing", 2)
     game = resolve_input(args.input, P["input"] / "downloads").resolve()
@@ -225,6 +238,9 @@ def cmd_analyze(args, cfg):
     for n, c in enumerate(cands):
         p = PL.build_plan(c, sig, tr, args.preset, preset, cfg, kw, face_src=str(face) if face else None, face_delay=delay,
                           game_info=info, face_info=finfo, face_crop=face_crop, face_mode=fmode, has_mic=has_mic)
+        if n == 0 and preset["layout_mode"] in ("split", "pip", "circle", "reaction") and not p["has_face"]:
+            log(f"WARNING: you chose the '{preset['layout_mode']}' layout but no streamer/webcam was found (none inside the video and no facecam file) "
+                "- these clips show gameplay only. Add the facecam file, or set facecam.rect in config.yaml to where the webcam is.")
         cd = out / c["clip_id"]
         cd.mkdir(parents=True, exist_ok=True)
         if use_oc:                      # OpenClipper AI Smart Reframing: detect + track on the proxy, plan the 9:16 camera, store it in the plan
@@ -309,7 +325,7 @@ def cmd_export(args, cfg):
             o["size"] = meta["size"]
         finalize_output(cfg)
     ctx = _ctx(a, cfg, game, info, face, finfo, wd, False, meta.get("face_crop"), meta.get("face_mode") or "show")
-    ids = args.clips.split(",") if args.clips else [c["clip_id"] for c in meta["clips"][: cfg["output"]["max_clips"]]]
+    ids = args.clips.split(",") if args.clips else [c["clip_id"] for c in [x for x in meta["clips"] if not x.get("rejected")][: cfg["output"]["max_clips"]]]
     W, H = cfg["output"]["size"]
     from .capcut import write_bundle
     for n, cid in enumerate(ids):
@@ -558,6 +574,10 @@ def cmd_serve(args, cfg):
 def _common(a):
     a.add_argument("--face", help="facecam video (iPhone) - optional")
     a.add_argument("--no-auto-facecam", action="store_true", help="same as --facecam off")
+    a.add_argument("--layout", choices=["auto", "split", "pip", "circle", "reaction", "gameplay_voice", "game_audio"],
+                   help="force ONE layout for every clip (auto = the preset decides). split = gameplay on top, streamer at the bottom")
+    a.add_argument("--clip-len", help="clip length range in seconds, e.g. 30-120 (overrides the preset; 5-180)")
+    a.add_argument("--face-panel", type=float, help="split layout: streamer panel height as a fraction (0.15-0.6, default config output.face_panel = 0.32)")
     a.add_argument("--facecam", choices=["show", "hide", "off"], help="a webcam INSIDE the recording: show = own panel (default) | hide = remove it from the picture | off = leave the video as it is")
     a.add_argument("--face-delay", type=float, default=None, help="seconds facecam lags gameplay; omit to auto-detect")
     a.add_argument("--mic", help="separate mic audio file (else use --mic-track inside the game file)")

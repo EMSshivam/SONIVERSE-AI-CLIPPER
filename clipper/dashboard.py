@@ -79,6 +79,20 @@ def _output_args(body):
     if cnt:
         if not re.fullmatch(r"\d{1,2}", cnt) or not 1 <= int(cnt) <= 60: raise ValueError("clip count must be 1-60")
         a += ["--count", cnt]
+    lay = str(body.get("layout") or "").strip().lower()
+    if lay and lay != "auto":
+        if lay not in ("split", "pip", "circle", "reaction", "gameplay_voice", "game_audio"): raise ValueError("bad layout")
+        a += ["--layout", lay]
+    cl0, cl1 = str(body.get("clip_min") or "").strip(), str(body.get("clip_max") or "").strip()
+    if cl0 or cl1:
+        if not (re.fullmatch(r"\d{1,3}", cl0 or "0") and re.fullmatch(r"\d{1,3}", cl1 or "0")): raise ValueError("clip length must be seconds")
+        lo, hi = int(cl0 or 5), int(cl1 or 180)
+        if not 5 <= lo < hi <= 180: raise ValueError("clip length: min 5 s, max 180 s, min below max")
+        a += ["--clip-len", f"{lo}-{hi}"]
+    fp = str(body.get("face_panel") or "").strip()
+    if fp:
+        if not re.fullmatch(r"\d{1,2}", fp) or not 15 <= int(fp) <= 60: raise ValueError("streamer size must be 15-60 %")
+        a += ["--face-panel", f"{int(fp) / 100:.2f}"]
     fcm = str(body.get("facecam") or "").strip().lower()
     if fcm:
         if fcm not in ("show", "hide", "off"): raise ValueError("facecam must be show, hide or off")
@@ -149,7 +163,7 @@ def _project(P, name):
     for c in m["clips"]:
         cd = d / c["clip_id"]
         if m.get("engine") == "supoclip":
-            clips.append({**{k: c[k] for k in ("clip_id", "rank", "score", "start", "end", "reason") if k in c}, "title": c.get("title", ""),
+            clips.append({**{k: c[k] for k in ("clip_id", "rank", "score", "start", "end", "reason") if k in c}, "title": c.get("title", ""), "rejected": bool(c.get("rejected")),
                           "text": c.get("text", ""), "ranked_by": "supoclip", "layouts": [], "effects": {}, "overrides": {}, "captions": "",
                           "preview": c["file"], "finals": [], "capcut": False, "final_only": True,
                           "tracking": m.get("tracking") or OE_static_view("SupoClip renders its own vertical crop; OpenClipper reframing is not applied to its files")})
@@ -160,7 +174,7 @@ def _project(P, name):
             continue
         finals = sorted(f.name for f in cd.glob(f"{c['clip_id']}_*x*.mp4"))
         clips.append({**{k: c[k] for k in ("clip_id", "rank", "score", "start", "end", "peak", "reason") if k in c},
-                      "title": plan.get("title", ""), "text": c.get("text", "")[:240], "ranked_by": c.get("ranked_by", "heuristics"),
+                      "title": plan.get("title", ""), "rejected": bool(c.get("rejected")), "text": c.get("text", "")[:240], "ranked_by": c.get("ranked_by", "heuristics"),
                       "layouts": [(l["layout"], l["s"], l["e"]) for l in plan["layouts"]],
                       "effects": {k: len(v) for k, v in plan["effects"].items()},
                       "overrides": plan.get("overrides", {}), "captions": " ".join(w["w"] for w in plan["captions"]["words"]),
@@ -421,6 +435,25 @@ class H(BaseHTTPRequestHandler):
             if u == "/api/preview":
                 a = ["preview", "--clipsdir", str(self.P["output"] / body["project"]), "--clips", ",".join(body["clips"])]
                 return self._send(200, {"id": _spawn("preview", a, self.P, f"preview {body['project']}")})
+            if u == "/api/reject":          # {project, clip, action: reject | restore | delete}
+                d = (self.P["output"] / body["project"]).resolve()
+                if self.P["output"].resolve() not in d.parents: return self._send(400, {"error": "bad path"})
+                mf = d / "clips.json"; m = load_json(mf); act = body.get("action", "reject")
+                c = next((x for x in m["clips"] if x["clip_id"] == body["clip"]), None)
+                if not c: return self._send(404, {"error": "clip not found"})
+                if act == "delete":       # out of the list; its files go to _deleted/ (recoverable until you empty that folder)
+                    import shutil
+                    src = d / c["clip_id"]
+                    if src.exists():
+                        trash = d / "_deleted"; trash.mkdir(exist_ok=True)
+                        dst = trash / c["clip_id"]
+                        if dst.exists(): shutil.rmtree(dst, ignore_errors=True)
+                        shutil.move(str(src), str(dst))
+                    m["clips"] = [x for x in m["clips"] if x["clip_id"] != c["clip_id"]]
+                else:
+                    c["rejected"] = act == "reject"
+                save_json(mf, m)
+                return self._send(200, {"ok": True})
             if u in ("/api/override", "/api/captions"):
                 pf = (self.P["output"] / body["project"] / body["clip"] / "plan.json").resolve()
                 if self.P["output"].resolve() not in pf.parents: return self._send(400, {"error": "bad path"})
@@ -698,6 +731,12 @@ __CSS__</style>
   <div class=chk><input type=checkbox id=capon checked><label for=capon style="margin:0;color:var(--tx);font-size:13.5px">Burn captions into the video <span class=small>(untick for clips without subtitles; the CapCut bundle still gets a .srt file)</span></label></div>
   <label for=fcm>Streamer / webcam inside the video <span class=small>(16:9 streams with the webcam in a corner)</span></label>
   <select id=fcm><option value="show">Show the streamer (own panel) - if a webcam is found</option><option value="hide">Remove the streamer completely</option><option value="off">Leave the video as it is</option></select>
+  <div class=row><div><label for=lay>Layout <span class=small>(your choice wins over the preset)</span></label>
+   <select id=lay><option value="auto">Automatic (preset decides)</option><option value="split" selected>Gameplay top + streamer bottom</option><option value="pip">Gameplay + small streamer box</option><option value="circle">Gameplay + round streamer bubble</option><option value="reaction">Big streamer top + gameplay bottom</option><option value="gameplay_voice">Gameplay only (keep voice)</option></select></div>
+   <div><label for=fpn>Streamer size at the bottom (%)</label><input id=fpn type=number min=15 max=60 value=32></div></div>
+  <div class=row><div><label for=cmin>Clip length: shortest (seconds)</label><input id=cmin type=number min=5 max=175 placeholder="preset"></div>
+   <div><label for=cmax>Clip length: longest (seconds, up to 180)</label><input id=cmax type=number min=10 max=180 placeholder="preset"></div></div>
+  <div class=small style="margin-top:4px">Leave empty to use the preset's length. Clips are at least the shortest length and at most the longest, so for clips of about 2 minutes use 110 and 130.</div>
   <label for=cnt>How many clips to find</label><input id=cnt type=number min=1 max=60 value=12>
   <div class=small style="margin-top:4px">You decide. A good start is about 1 clip per 5-10 minutes of footage (a 1-hour video: 6-12 clips). More clips = more processing time and more previews to review.</div>
   <button class="ghost s" style="margin-top:8px" onclick="post('/api/edit-presets',{})">Edit presets</button>
@@ -784,7 +823,7 @@ const dz=$('drop');['dragenter','dragover'].forEach(e=>document.addEventListener
 document.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(!f)return;const t=ev.dataTransfer.getData('text');
  const p=E?E.pathForFile(f):'';if(p)src.value=p;else if(t)src.value=t;else alert('Drag-and-drop needs the desktop app - use Browse or paste the path.')});
 async function start(){if(!src.value)return alert('Pick a video first');
- const r=await post('/api/start',{input:src.value,face:face.value,mic:mic.value,game_track:gt.value,mic_track:mt.value,preset:preset.value,allow_paid:paid.checked,export:exp.checked,aspect:asp.value,resolution:res.value,count:cnt.value,captions:capon.checked?'on':'off',facecam:fcm.value});
+ const r=await post('/api/start',{input:src.value,face:face.value,mic:mic.value,game_track:gt.value,mic_track:mt.value,preset:preset.value,allow_paid:paid.checked,export:exp.checked,aspect:asp.value,resolution:res.value,count:cnt.value,captions:capon.checked?'on':'off',facecam:fcm.value,layout:lay.value,face_panel:fpn.value,clip_min:cmin.value,clip_max:cmax.value});
  if(r.error)alert(r.error);else{toast('Started. Progress shows under Activity.','good');state()}}
 function sizeFor(a,r){const[x,y]=a.split(':').map(Number),e=v=>Math.max(2,Math.round(v/2)*2);return x<=y?[e(r),e(r*y/x)]:[e(r*x/y),e(r)]}
 function sizeNote(){const[w,h]=sizeFor(asp.value,+res.value);$('szn').textContent=`Output: ${w} x ${h} px`}
@@ -795,7 +834,9 @@ async function loadProj(keep){const n=$('proj').value;if(!n)return;PR=await (awa
  const open=new Set([...document.querySelectorAll('details[open]')].map(d=>d.id));
  $('clips').innerHTML=`<div class=bar2><label><input type=checkbox id=selall onchange="selAll(this.checked)">Select all</label><span class=grow id=selN></span><select id=exAsp title="Shape of the exported video"><option value="">Same shape${PR.aspect?' ('+PR.aspect+')':''}</option><option value="9:16">9:16 Vertical - Shorts / Reels / TikTok</option><option value="4:5">4:5 Portrait - Instagram / Facebook feed</option><option value="3:4">3:4 Portrait</option><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape - YouTube / widescreen</option></select><select id=exRes title="Resolution of the exported video"><option value="1080">1080p Full HD</option><option value="720">720p HD</option><option value="1440">1440p 2K</option><option value="2160">2160p 4K</option><option value="480">480p</option></select><select id=exCap title="Captions in the exported video"><option value="">Captions as planned</option><option value="on">Captions on</option><option value="off">Captions off</option></select><button class=s onclick="doExport()" data-need>Export selected</button><button class="s" onclick=redoPreview() data-need>Refresh previews</button></div>`+
  PR.clips.map(c=>`<article class="card clip"><div>${c.preview?`<video controls preload=metadata src="/files/${encodeURIComponent(PR.name)}/${c.preview}"></video>`:'<div class=vnone>no preview</div>'}</div>
- <div style="min-width:0"><div class=ch><label><input type=checkbox data-c="${c.clip_id}" ${sel.has(c.clip_id)?'checked':''} onchange="selOne('${c.clip_id}',this.checked)"><h3>#${c.rank} ${esc(c.title||c.clip_id)}</h3></label><span class=score title="Highlight score">${c.score}</span></div>
+ <div style="min-width:0"><div class=ch><label><input type=checkbox data-c="${c.clip_id}" ${sel.has(c.clip_id)?'checked':''} onchange="selOne('${c.clip_id}',this.checked)"><h3>#${c.rank} ${esc(c.title||c.clip_id)}${c.rejected?' <span class=pill>rejected</span>':''}</h3></label><span class=score title="Highlight score">${c.score}</span>
+ <button class="ghost s" onclick="clipAct('${c.clip_id}','${c.rejected?'restore':'reject'}')" title="${c.rejected?'Bring this clip back':'Hide this clip (it can be restored; export skips it)'}">${c.rejected?'Restore':'Reject'}</button>
+ <button class="ghost s" onclick="if(confirm('Delete ${c.clip_id}? It leaves the list and its files move to the _deleted folder of this video.'))clipAct('${c.clip_id}','delete')" title="Remove from the list (files go to _deleted)">Delete</button></div>
  <div class=when>${fmt(c.start)} \u2013 ${fmt(c.end)} \u00b7 ${Math.round(c.end-c.start)}s \u00b7 ranked by ${esc(c.ranked_by)}${c.title?' \u00b7 '+esc(c.clip_id):''}</div>
  <div class=why>Why: ${esc(c.reason)}</div>
  <div class=tags>${c.layouts.map(l=>`<span class=pill>${l[0]} ${l[1].toFixed(0)}\u2013${l[2].toFixed(0)}s</span>`).join(' ')}${Object.entries(c.effects).map(([k,v])=>`<span class=pill>${k} \u00d7${v}</span>`).join(' ')}</div>
@@ -809,6 +850,7 @@ async function loadProj(keep){const n=$('proj').value;if(!n)return;PR=await (awa
  ${c.finals.length?`<div class=finals>Finals: ${c.finals.map(f=>`<a href="/files/${encodeURIComponent(PR.name)}/${c.clip_id}/${f}" target=_blank>${f}</a>`).join(' \u00b7 ')}${c.capcut?' \u00b7 CapCut bundle in clip folder':''}</div>`:''}
  </div></article>`).join('');selUpd()}
 function selOne(id,on){on?sel.add(id):sel.delete(id);selUpd()}
+async function clipAct(id,action){await post('/api/reject',{project:PR.name,clip:id,action});sel.delete(id);await loadProj(true)}
 function selAll(on){PR.clips.forEach(c=>on?sel.add(c.clip_id):sel.delete(c.clip_id));document.querySelectorAll('input[data-c]').forEach(x=>x.checked=on);selUpd()}
 function selUpd(){const n=sel.size,t=PR?PR.clips.length:0;if(!$('selN'))return;$('selN').textContent=n?`${n} of ${t} selected`:'Select clips to export';
  document.querySelectorAll('[data-need]').forEach(b=>b.disabled=!n);const a=$('selall');if(a){a.checked=!!t&&n==t;a.indeterminate=n>0&&n<t}}

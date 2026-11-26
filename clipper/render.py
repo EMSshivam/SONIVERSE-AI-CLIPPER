@@ -48,6 +48,7 @@ def _fcrop(fw, fh, pw, ph, center, zf):
 FACE_LAYOUTS = ("split", "pip", "circle", "reaction")
 # Layout geometry is defined for a 1080x1920 frame and kept PROPORTIONAL, so any aspect ratio / resolution gets the same look.
 REACT_FRAC, PIP_Y_FRAC, CIRCLE_Y_FRAC = 1312 / 1920, 1230 / 1920, 1180 / 1920
+SPLIT_FACE_FRAC = 0.32      # split layout: streamer panel height at the bottom (config output.face_panel); gameplay fills the rest on top
 
 
 def _scale(W, H):
@@ -124,14 +125,14 @@ def _layout_graph(layout, face_ok, S, game, face, seg, hdr, fps, zoom_ev, freeze
     if layout in ("split", "pip", "circle", "reaction") and not face_ok:
         layout = "gameplay_voice"
     layout = adapt_layout(layout, W, H)
-    if face_crop:                                   # webcam INSIDE the recording: cut it out for its own panel, paint it over in the gameplay copy
-        from .facecam import crop_expr, mask_expr
-        if face_ok and layout in FACE_LAYOUTS:
-            g_in = f"[0:v]{hdr}setpts=PTS-STARTPTS,fps={fps},{mask_expr(face_crop)},"
+    if face_crop:                                   # webcam INSIDE the recording: cut it out for its own panel
+        from .facecam import crop_expr
         f_in = f"[1:v]{hdr}{crop_expr(face_crop)},setpts=PTS-STARTPTS,fps={fps},"
     pre = None
     avoid_ = None
-    if face_crop and hide:                          # webcam inside the recording, to be REMOVED: blur-fill it in the gameplay picture, keep windows off it
+    if face_crop and (hide or (face_ok and layout in FACE_LAYOUTS)):
+        # the streamer is either removed or shown in their own panel: in the gameplay copy the webcam corner is blur-filled from the
+        # picture next to it (no black box) and the gameplay crop window is kept off it
         from .facecam import remove_graph
         pre = remove_graph(face_crop, f"[0:v]{hdr}setpts=PTS-STARTPTS,fps={fps}")
         g_in = "[gsrc]"
@@ -141,10 +142,10 @@ def _layout_graph(layout, face_ok, S, game, face, seg, hdr, fps, zoom_ev, freeze
         g = g_in + _gcrop(gw, gh, W, H, seg["cropx"], cam, avoid_) + "[comp]"
         graph = [g]
     elif layout == "split":
-        half = _e(H / 2)
-        graph = [g_in + _gcrop(gw, gh, W, half, seg["cropx"], cam, avoid_) + "[g]",
-                 f_in + _fcrop(face[0], face[1], W, half, seg["face"], 1.0) + "[f]",
-                 f"[g][f]vstack=inputs=2,drawbox=x=0:y={half - max(2, _e(4 * S)) // 2}:w={W}:h={max(2, _e(4 * S))}:color=0xFFD400@0.95:t=fill[comp]"]
+        fh_ = _e(SPLIT_FACE_FRAC * H); top = H - fh_         # gameplay on top, streamer at the bottom
+        graph = [g_in + _gcrop(gw, gh, W, top, seg["cropx"], cam, avoid_) + "[g]",
+                 f_in + _fcrop(face[0], face[1], W, fh_, seg["face"], 1.0) + "[f]",
+                 f"[g][f]vstack=inputs=2,drawbox=x=0:y={top - max(2, _e(4 * S)) // 2}:w={W}:h={max(2, _e(4 * S))}:color=0xFFD400@0.95:t=fill[comp]"]
     elif layout == "pip":
         pip = _e(380 * S)
         graph = [g_in + _gcrop(gw, gh, W, H, seg["cropx"], cam, avoid_) + "[g]",
@@ -193,6 +194,10 @@ def render_plan(plan, ctx, cfg, out_path, preview=False):
     ov = plan.get("overrides", {})
     dis = set(ov.get("disable", []))
     W, H = (cfg["output"]["preview_size"] if preview else cfg["output"]["size"])
+    global SPLIT_FACE_FRAC
+    SPLIT_FACE_FRAC = min(0.6, max(0.15, float(plan.get("face_panel") or cfg["output"].get("face_panel", 0.32))))
+    from . import captions as _cap
+    _cap.Y_FRAC["split"] = round(1 - SPLIT_FACE_FRAC, 3)      # captions sit on the gameplay/streamer seam
     S = _scale(W, H)
     enc = pick_encoder(cfg.get("encoder", "auto"))
     fps = ctx["fps"]

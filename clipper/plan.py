@@ -45,7 +45,7 @@ def _labels(sig, i0, i1, preset, has_face, has_mic, words, hop):
         elif zmic[k] > thr and voice[k]:
             out.append("reaction")
         elif not voice[k]:
-            out.append("game_audio")
+            out.append("split")      # the streamer is on camera: keep their panel even when they are quiet
         elif mz[k] > 1.2 or gz[k] > 2.5:
             out.append("circle" if preset.get("pip_style") == "circle" else "pip")
         else:
@@ -158,7 +158,7 @@ def build_plan(clip, sig, transcript, preset_name, preset, cfg, kw, face_src=Non
         "clip_id": clip["clip_id"], "rank": clip["rank"], "score": clip["score"], "reason": clip["reason"],
         "preset": preset_name, "title": clip.get("title", ""), "start": start, "end": end, "duration": round(dur, 2), "text": clip["text"],
         "face_delay": face_delay, "has_face": has_face, "has_mic": has_mic, "face_crop": face_crop, "face_mode": face_mode if face_crop else None,
-        "layouts": layouts,
+        "layouts": layouts, "face_panel": float(cfg["output"].get("face_panel", 0.32)), "layout_forced": preset.get("layout_mode") != "dynamic" and preset.get("layout_mode"),
         "effects": {"zoom": zooms, "freeze": freezes, "memes": memes, "sfx": sfx},
         "transitions": {"enabled": bool(ef["transitions"]), "duration": 0.25, "types": ["fade", "slideleft", "zoomin", "fadeblack"]},
         "captions": {"enabled": bool(cfg["output"].get("captions", True)), "style": preset["caption_style"],
