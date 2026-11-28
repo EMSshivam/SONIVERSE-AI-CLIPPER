@@ -62,6 +62,11 @@ output:
   max_clips: 8
   preview_clips: 12
   capcut_bundle: true    # also write clean parts + SRT + audio stems + edit notes for CapCut
+  view_mode: natural     # gameplay view: natural | wide_blur (more picture, blurred fill, no stretch) | wide (more picture, stretched)
+  view_widen: 0.2        # wide views: how much wider than natural (0-0.35)
+  corner_fill: blur      # webcam corner inside the gameplay (when it is in view): blur | logo
+  corner_logo: assets/soniverse.png   # image used for corner_fill: logo (any PNG; transparent background looks best)
+  corner_avoid: normal   # normal = slide the gameplay crop off the webcam corner only when the subject stays in view | strong = try harder
   face_panel: 0.32       # split layout: streamer panel = this fraction of the height at the BOTTOM, gameplay fills the top (0.15-0.6)
 
 assets:

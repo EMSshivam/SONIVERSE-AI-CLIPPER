@@ -82,13 +82,47 @@ def _task(src, cfg, progress):
         progress(15 + int(0.6 * float(t.get("progress") or 0)), msg)
         if st == "completed":
             return base, tid, t.get("clips", [])
-        if st in ("error", "cancelled"):
+        if st in ("error", "failed", "cancelled", "canceled"):
             raise RuntimeError(f"SupoClip task {st}: {t.get('progress_message', '')}")
         time.sleep(5)
     raise RuntimeError("SupoClip timed out")
 
 
-def highlights(src, cfg, progress=lambda pct, s: None, duration=None):
+SC_MAX_SECONDS = 5400        # SupoClip server default MAX_VIDEO_DURATION (90 min)
+
+
+def upload_copy(src, wd, cfg, audio_stream=None, progress=lambda pct, s: None):
+    """SupoClip only returns TIMESTAMPS (the clips are rendered from the original recording), so it gets a small copy instead of the
+    multi-GB 4K file: 640 px, 15 fps video + mono speech-quality audio, same timeline. Cached next to the other analysis files."""
+    import pathlib
+    from .util import sh
+    out = pathlib.Path(wd) / "supoclip_upload.mp4"
+    if out.exists() and out.stat().st_size > 10000:
+        return out
+    log("SupoClip: making a small upload copy (640px, 15fps, mono audio) - the 4K original stays on this PC")
+    progress(4, "supoclip: preparing a small upload copy")
+    amap = ["-map", f"0:{audio_stream}"] if audio_stream is not None else ["-map", "0:a:0?"]
+    tmp = out.with_suffix(".part.mp4")
+    cmd = lambda hw: ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *hw, "-i", str(src), "-map", "0:v:0", *amap,
+                      "-vf", "fps=15,scale=640:-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32", "-g", "60",
+                      "-c:a", "aac", "-ac", "1", "-ar", "32000", "-b:a", "64k", "-movflags", "+faststart", str(tmp)]
+    from .signals import _hw
+    hw = _hw(cfg)
+    r = sh(cmd(hw), check=not hw)
+    if hw and r.returncode != 0:
+        sh(cmd([]))
+    tmp.replace(out)
+    log(f"SupoClip upload copy: {out.stat().st_size / 1e6:.0f} MB")
+    return out
+
+
+def highlights(src, cfg, progress=lambda pct, s: None, duration=None, wd=None, audio_stream=None):
+    if duration and duration > SC_MAX_SECONDS:
+        raise RuntimeError(f"SupoClip accepts videos up to {SC_MAX_SECONDS // 60} min; this one is {duration / 60:.0f} min "
+                           "(raise MAX_VIDEO_DURATION in SupoClip's .env to allow longer videos)")
+    if wd is not None:
+        import pathlib
+        src = upload_copy(src, wd, cfg, audio_stream, progress)
     """Highlight detection ONLY: the moments SupoClip picked, as source-timeline windows.  SupoClip's own rendered MP4s are NOT downloaded -
     the SONIVERSE pipeline renders these windows from the original recording (with OpenClipper reframing).
     -> [{start, end, score, title, text}] sorted by score; raises if SupoClip returned no usable timestamps."""

@@ -18,10 +18,31 @@ def _hdr_chain(vinfo, cfg):
     return ""
 
 
-def _gcrop(gw, gh, pw, ph, frac, cam=None, avoid=None):
+_LBL = [0]
+
+
+def _fit(pw, ph):
+    """How the (possibly widened) gameplay window is put into its pw x ph panel.
+    natural / wide: scale to the panel (wide = a wider window squeezed in = stretch);  wide_blur: the wide window keeps its shape,
+    centred, and the free space above/below is a blurred copy of the same picture (no stretch)."""
+    if VIEW_MODE != "wide_blur" or VIEW_WIDEN <= 0:
+        return f"scale={pw}:{ph}:flags=lanczos"
+    _LBL[0] += 1
+    k = _LBL[0]
+    return (f"split[vwa{k}][vwb{k}];[vwb{k}]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},gblur=sigma=28,eq=brightness=-0.08[vbg{k}];"
+            f"[vwa{k}]scale={pw}:-2:flags=lanczos[vfg{k}];[vbg{k}][vfg{k}]overlay=x=0:y=(H-h)/2")
+
+
+def _widen(layout=None, face_frac=None):
+    if VIEW_MODE == "classic":         # the old look: split gameplay framed as if it had half the height, then stretched into its panel
+        return max(1.0, (1 - (face_frac or SPLIT_FACE_FRAC)) / 0.5) if layout == "split" else 1.0
+    return 1.0 + (VIEW_WIDEN if VIEW_MODE in ("wide", "wide_blur") else 0.0)
+
+
+def _gcrop(gw, gh, pw, ph, frac, cam=None, avoid=None, layout=None):
     if cam:       # OpenClipper smart-reframe: constant-size window whose x/y follow the planner's path (ffmpeg sendcmd, one update per frame)
-        return (f"sendcmd=f={cam['file']},crop@cam={cam['w']}:{cam['h']}:{cam['x']}:{cam['y']}:exact=1,scale={pw}:{ph}:flags=lanczos")
-    ar = pw / ph
+        return (f"sendcmd=f={cam['file']},crop@cam={cam['w']}:{cam['h']}:{cam['x']}:{cam['y']}:exact=1," + _fit(pw, ph))
+    ar = pw / ph * _widen(layout)
     cw = min(gw, int(gh * ar)); ch = int(cw / ar)
     if ch > gh:
         ch = gh; cw = int(ch * ar)
@@ -29,8 +50,8 @@ def _gcrop(gw, gh, pw, ph, frac, cam=None, avoid=None):
     x = _e((gw - cw) * frac); y = _e((gh - ch) / 2)
     if avoid:                                                  # webcam is being hidden: keep the window off it when that costs little
         from .facecam import shift_clear
-        x = _e(shift_clear(x, cw, gw, avoid[0], avoid[2]))
-    return f"crop={cw}:{ch}:{x}:{y},scale={pw}:{ph}:flags=lanczos"
+        x = _e(shift_clear(x, cw, gw, avoid[0], avoid[2], AVOID_SHIFT))
+    return f"crop={cw}:{ch}:{x}:{y}," + _fit(pw, ph)
 
 
 def _fcrop(fw, fh, pw, ph, center, zf):
@@ -48,6 +69,11 @@ def _fcrop(fw, fh, pw, ph, center, zf):
 FACE_LAYOUTS = ("split", "pip", "circle", "reaction")
 # Layout geometry is defined for a 1080x1920 frame and kept PROPORTIONAL, so any aspect ratio / resolution gets the same look.
 REACT_FRAC, PIP_Y_FRAC, CIRCLE_Y_FRAC = 1312 / 1920, 1230 / 1920, 1180 / 1920
+VIEW_MODE = "natural"       # gameplay view: natural | wide (wider picture, squeezed = stretch) | wide_blur (wider picture, blurred fill, no stretch)
+VIEW_WIDEN = 0.0            # how much wider than natural (0-0.35) for the wide modes
+AVOID_SHIFT = 0.3           # how far (fraction of the crop width) the gameplay window may slide to keep the webcam corner out of view
+CORNER_FILL = "blur"        # what covers the webcam corner when it is still in view: blur | logo
+CORNER_LOGO = None          # image for CORNER_FILL = logo
 SPLIT_FACE_FRAC = 0.32      # split layout: streamer panel height at the bottom (config output.face_panel); gameplay fills the rest on top
 
 
@@ -61,21 +87,31 @@ def adapt_layout(layout, W, H):
     return {"split": "pip", "reaction": "pip"}.get(layout, layout) if W > H else layout
 
 
-def game_panel(layout, W, H, S):
-    """Pixel size of the GAMEPLAY crop a layout produces (the area OpenClipper's reframer must fill)."""
+def game_panel(layout, W, H, S, face_frac=None, widen=None):
+    """Pixel size of the GAMEPLAY window a layout needs (the shape OpenClipper's reframer plans). With a wide gameplay view the window is
+    wider than the panel it lands in (1.2 -> 20% more picture width). widen: a factor, "classic", or None = the current render settings."""
     layout = adapt_layout(layout, W, H)
+    ff = face_frac or SPLIT_FACE_FRAC
+    classic = widen == "classic" or (widen is None and VIEW_MODE == "classic")
+    if classic:
+        k = max(1.0, (1 - ff) / 0.5) if layout == "split" else 1.0
+    else:
+        k = widen or _widen()
     if layout == "split":
-        return (W, _e(H / 2))
+        return (_e(W * k), H - _e(ff * H))
     if layout == "reaction":
-        return (W, H - _e(REACT_FRAC * H))
-    return (W, H)
+        return (_e(W * k), H - _e(REACT_FRAC * H))
+    return (_e(W * k), H)
 
 
 def plan_panels(plan, cfg, has_face):
     """All distinct gameplay panel sizes (at final resolution) a plan can need.  Includes every layout's panel so the layout override in the
     Studio tab (force split / reaction ...) keeps a planned camera instead of falling back to the static crop."""
     W, H = cfg["output"]["size"]; S = _scale(W, H)
-    return {game_panel(lay, W, H, S) for lay in ("gameplay_voice", "split", "reaction")}
+    ff = min(0.6, max(0.15, float(plan.get("face_panel") or cfg["output"].get("face_panel", 0.32))))
+    vm = plan.get("view_mode") or cfg["output"].get("view_mode", "natural")
+    wk = "classic" if vm == "classic" else 1.0 + (min(0.35, max(0.0, float(plan.get("view_widen", cfg["output"].get("view_widen", 0.2))))) if vm in ("wide", "wide_blur") else 0.0)
+    return {game_panel(lay, W, H, S, ff, wk) for lay in ("gameplay_voice", "split", "reaction")}
 
 
 def _cam_for_segment(plan, seg, i, ctx, fps, game, eff_layout, W, H, S, tmp):
@@ -95,7 +131,8 @@ def _cam_for_segment(plan, seg, i, ctx, fps, game, eff_layout, W, H, S, tmp):
             log(f"OpenClipper camera does not cover segment {i} ({lo:.1f}-{hi:.1f}s) - using the static crop there")
             return None
         r = OE.cam_commands(cam, key, plan["start"], seg["s"], seg["e"] - seg["s"] + 0.5, fps, game[0], game[1], pw, ph,
-                            avoid=(ctx.get("face_crop") if ctx.get("face_mode") == "hide" else None))
+                            avoid=(ctx.get("face_crop") if (ctx.get("face_mode") == "hide" or (ctx.get("face_mode") == "show" and eff_layout in FACE_LAYOUTS))
+                                   else None), max_shift=AVOID_SHIFT)
         if not r:
             return None
         cw, ch, x0, y0, text = r
@@ -134,7 +171,11 @@ def _layout_graph(layout, face_ok, S, game, face, seg, hdr, fps, zoom_ev, freeze
         # the streamer is either removed or shown in their own panel: in the gameplay copy the webcam corner is blur-filled from the
         # picture next to it (no black box) and the gameplay crop window is kept off it
         from .facecam import remove_graph
-        pre = remove_graph(face_crop, f"[0:v]{hdr}setpts=PTS-STARTPTS,fps={fps}")
+        if CORNER_FILL == "logo" and CORNER_LOGO:
+            from .facecam import logo_graph
+            pre = remove_graph(face_crop, f"[0:v]{hdr}setpts=PTS-STARTPTS,fps={fps}", out_label="gblur") + ";" + logo_graph(face_crop, CORNER_LOGO, "gblur", "gsrc")
+        else:
+            pre = remove_graph(face_crop, f"[0:v]{hdr}setpts=PTS-STARTPTS,fps={fps}")
         g_in = "[gsrc]"
         avoid_ = face_crop
     pw = W
@@ -143,7 +184,7 @@ def _layout_graph(layout, face_ok, S, game, face, seg, hdr, fps, zoom_ev, freeze
         graph = [g]
     elif layout == "split":
         fh_ = _e(SPLIT_FACE_FRAC * H); top = H - fh_         # gameplay on top, streamer at the bottom
-        graph = [g_in + _gcrop(gw, gh, W, top, seg["cropx"], cam, avoid_) + "[g]",
+        graph = [g_in + _gcrop(gw, gh, W, top, seg["cropx"], cam, avoid_, "split") + "[g]",
                  f_in + _fcrop(face[0], face[1], W, fh_, seg["face"], 1.0) + "[f]",
                  f"[g][f]vstack=inputs=2,drawbox=x=0:y={top - max(2, _e(4 * S)) // 2}:w={W}:h={max(2, _e(4 * S))}:color=0xFFD400@0.95:t=fill[comp]"]
     elif layout == "pip":
@@ -194,8 +235,15 @@ def render_plan(plan, ctx, cfg, out_path, preview=False):
     ov = plan.get("overrides", {})
     dis = set(ov.get("disable", []))
     W, H = (cfg["output"]["preview_size"] if preview else cfg["output"]["size"])
-    global SPLIT_FACE_FRAC
+    global SPLIT_FACE_FRAC, AVOID_SHIFT, CORNER_FILL, CORNER_LOGO, VIEW_MODE, VIEW_WIDEN
+    VIEW_MODE = plan.get("view_mode") or cfg["output"].get("view_mode", "natural")
+    VIEW_WIDEN = min(0.35, max(0.0, float(plan.get("view_widen", cfg["output"].get("view_widen", 0.2)))))
     SPLIT_FACE_FRAC = min(0.6, max(0.15, float(plan.get("face_panel") or cfg["output"].get("face_panel", 0.32))))
+    AVOID_SHIFT = {"normal": 0.3, "strong": 0.6}.get(plan.get("corner_avoid") or cfg["output"].get("corner_avoid", "normal"), 0.3)
+    CORNER_FILL = plan.get("corner_fill") or cfg["output"].get("corner_fill", "blur")
+    lp = cfg["output"].get("corner_logo") or "assets/soniverse.png"
+    lp = pathlib.Path(lp) if pathlib.Path(lp).is_absolute() else ROOT / lp
+    CORNER_LOGO = str(lp) if lp.exists() else None
     from . import captions as _cap
     _cap.Y_FRAC["split"] = round(1 - SPLIT_FACE_FRAC, 3)      # captions sit on the gameplay/streamer seam
     S = _scale(W, H)

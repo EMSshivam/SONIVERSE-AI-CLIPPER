@@ -338,7 +338,7 @@ def aspect_key(pw, ph):
     return f"{pw / ph:.4f}"
 
 
-def cam_commands(cam, key, plan_start, seg_s, seg_len, fps, gw, gh, pw, ph, avoid=None):
+def cam_commands(cam, key, plan_start, seg_s, seg_len, fps, gw, gh, pw, ph, avoid=None, max_shift=0.3):
     """-> (crop_w, crop_h, x0, y0, sendcmd_text) for one layout segment, in pixels of a gw x gh source.
     Constant crop size (ffmpeg's crop cannot change size mid-stream) = the LARGEST window the planner asked for in this segment (never loses a subject
     the planner wanted visible); the position is the planner's path, interpolated to every output frame and lightly smoothed (not across cuts)."""
@@ -389,7 +389,7 @@ def cam_commands(cam, key, plan_start, seg_s, seg_len, fps, gw, gh, pw, ph, avoi
     ys = np.clip(np.round(Ys * gh - chp / 2), 0, gh - chp).astype(int)
     if avoid:                                                      # webcam is being hidden: slide the window off it wherever that costs the subject little
         from .facecam import shift_clear
-        xs = np.array([shift_clear(float(v), cwp, gw, avoid[0], avoid[2]) for v in xs])
+        xs = np.array([shift_clear(float(v), cwp, gw, avoid[0], avoid[2], max_shift) for v in xs])
         k2 = max(1, int(fps * 0.25))
         xs = np.clip(np.round(np.convolve(np.pad(xs, k2, mode="edge"), np.ones(2 * k2 + 1) / (2 * k2 + 1), mode="valid")), 0, gw - cwp).astype(int)
     lines, px, py = [], None, None

@@ -112,6 +112,124 @@ def OE_static(reason):
     return OE.static_status(reason)
 
 
+PICKER_LABEL = {"fast": "Fast (scoring only)", "smart": "Smart (scoring + Ollama)", "supoclip": "SupoClip"}
+
+
+def _picked_with(picker, sc_hl, meta_file, more):
+    """What REALLY picked the clips: smart only if Ollama answered. 'Find more' keeps the project's original label."""
+    if more and meta_file.exists():
+        old = (load_json(meta_file) or {}).get("picker")
+        if old:
+            return old
+    if sc_hl:
+        return "supoclip"
+    return "smart" if PV.LAST.get("model") not in (None, "heuristics") else "fast"
+
+
+def _smart_rerank(cands, cfg, args, game):
+    """Ollama re-ranking; says clearly when Ollama could not be used (instead of silently falling back)."""
+    os.environ["SV_FORCE_OLLAMA"] = "1"            # Smart = use Ollama for this run, whatever the Settings switch says
+    try:
+        out = RK.llm_rerank(cands, cfg, args.yes, video=str(game))
+    finally:
+        os.environ.pop("SV_FORCE_OLLAMA", None)
+    if PV.LAST.get("model") in (None, "heuristics"):
+        log("WARNING: Smart picking was chosen but Ollama was not reachable (or is switched off in Settings) - Fast scoring was used instead")
+    return out
+
+
+def _run_args(args, preset, cfg):
+    """The choices of this run, so 'find more clips' later uses exactly the same style."""
+    o = cfg["output"]
+    return {"preset": args.preset, "layout": getattr(args, "layout", None), "face_panel": o.get("face_panel"), "view": o.get("view_mode"),
+            "widen": round(float(o.get("view_widen", 0.2)) * 100), "corner_fill": o.get("corner_fill"), "corner_avoid": o.get("corner_avoid"),
+            "clip_len": list(preset.get("clip_len") or []), "captions": getattr(args, "captions", None), "facecam": getattr(args, "facecam", None),
+            "game_track": getattr(args, "game_track", None), "mic": getattr(args, "mic", None), "mic_track": getattr(args, "mic_track", None),
+            "face": getattr(args, "face", None), "aspect": getattr(args, "aspect", None), "resolution": getattr(args, "resolution", None)}
+
+
+def cmd_more(args, cfg):
+    """Find N more clips for an analysed video with the SAME style as before (or a new picker)."""
+    out = pathlib.Path(args.clipsdir).resolve()
+    meta = load_json(out / "clips.json")
+    ra = dict(meta.get("run_args") or {})
+    if not ra:                                   # projects made before this feature: read the style back from the first clip's plan
+        pl = next((load_json(out / c["clip_id"] / "plan.json") for c in meta["clips"] if (out / c["clip_id"] / "plan.json").exists()), {}) or {}
+        ra = {"preset": meta.get("preset"), "layout": pl.get("layout_forced") or None, "face_panel": pl.get("face_panel"), "view": pl.get("view_mode"),
+              "widen": round(float(pl.get("view_widen", 0.2)) * 100), "corner_fill": pl.get("corner_fill"), "corner_avoid": pl.get("corner_avoid"),
+              "game_track": (meta.get("args") or {}).get("game_track"), "mic": (meta.get("args") or {}).get("mic"), "mic_track": (meta.get("args") or {}).get("mic_track")}
+    argv = ["analyze", meta["source"], "--yes", "--more", str(args.count), "--preset", ra.get("preset") or meta.get("preset") or "gta6_cinematic"]
+    flag = {"layout": "--layout", "view": "--view", "corner_fill": "--corner-fill", "corner_avoid": "--corner-avoid", "captions": "--captions",
+            "facecam": "--facecam", "mic": "--mic", "face": "--face", "aspect": "--aspect", "resolution": "--resolution"}
+    for k, f in flag.items():
+        if ra.get(k):
+            argv += [f, str(ra[k])]
+    if ra.get("face_panel"):
+        argv += ["--face-panel", f"{float(ra['face_panel']):.2f}"]
+    if ra.get("widen") is not None:
+        argv += ["--widen", str(int(ra["widen"]))]
+    if ra.get("clip_len") and len(ra["clip_len"]) == 2:
+        argv += ["--clip-len", f"{int(ra['clip_len'][0])}-{int(ra['clip_len'][1])}"]
+    for k, f in (("game_track", "--game-track"), ("mic_track", "--mic-track")):
+        if ra.get(k) is not None:
+            argv += [f, str(ra[k])]
+    pk = args.picker or meta.get("picker")
+    if pk:
+        argv += ["--picker", "fast" if pk == "supoclip" else pk]      # more clips always come from the cached local analysis
+    log("find more: " + " ".join(argv[2:]))
+    main(argv)
+
+
+def _ts_in(t):
+    t = t.strip()
+    if not t:
+        raise ValueError("empty time")
+    parts = [float(x) for x in t.split(":")]
+    if len(parts) > 3:
+        raise ValueError(t)
+    s = 0.0
+    for p in parts:
+        s = s * 60 + p
+    return s
+
+
+def _parse_ranges(text, duration):
+    """'15:20-16:05, 1:02:10-1:03:40' (also new lines / semicolons) -> [(start_s, end_s)]; clear errors for anything wrong."""
+    import re as _re
+    out = []
+    for tok in [x for x in _re.split(r"[,;\n]+", str(text)) if x.strip()]:
+        m = _re.fullmatch(r"\s*([\d:.]+)\s*(?:-|to|\u2013)\s*([\d:.]+)\s*", tok)
+        if not m:
+            raise SystemExit(f"time range '{tok.strip()}' must look like 15:20-16:05 (or 1:02:10-1:03:40)")
+        a, b = _ts_in(m.group(1)), _ts_in(m.group(2))
+        if b - a < 3:
+            raise SystemExit(f"time range '{tok.strip()}': the end must be at least 3 s after the start")
+        if a >= duration:
+            raise SystemExit(f"time range '{tok.strip()}' starts after the end of the video ({fmt_ts(duration)})")
+        out.append((a, min(b, duration)))
+    if not out:
+        raise SystemExit("no time ranges given")
+    return out
+
+
+def _manual_cands(ranges, tr, snap, first, duration):
+    segs = tr.get("segments", []) if tr else []
+    words = tr.get("words", []) if tr else []
+    out = []
+    for n, (a, b) in enumerate(ranges):
+        if snap and segs:          # nudge (max 1.5 s) to sentence edges so no word is cut in half
+            st = [g["s"] for g in segs if abs(g["s"] - a) <= 1.5]
+            en = [g["e"] for g in segs if abs(g["e"] - b) <= 1.5]
+            a = min(st, key=lambda v: abs(v - a)) if st else a
+            b = min(en, key=lambda v: abs(v - b)) if en else b
+        a, b = max(0.0, a), min(duration, b)
+        i = first + n
+        out.append({"start": round(a, 2), "end": round(b, 2), "peak": round((a + b) / 2, 2), "raw": 10.0, "score": 100.0,
+                    "reason": "your time range", "text": " ".join(w["w"] for w in words if a <= w["s"] < b)[:600], "title": "",
+                    "ranked_by": "manual", "manual": True, "rank": i, "clip_id": f"clip{i:02d}"})
+    return out
+
+
 def _supoclip_cands(sc, sig, max_n):
     """SupoClip windows -> candidate dicts in the shape the SONIVERSE planner expects."""
     top = sig["hop"] * len(sig["motion"])
@@ -153,6 +271,14 @@ def cmd_analyze(args, cfg):
         lo, hi = max(5.0, min(lo, hi)), min(180.0, max(lo, hi))
         preset["clip_len"] = [lo, max(hi, lo + 3)]
         log(f"clip length set by you: {preset['clip_len'][0]:.0f}-{preset['clip_len'][1]:.0f}s")
+    if getattr(args, "view", None):
+        cfg["output"]["view_mode"] = args.view
+    if getattr(args, "widen", None) is not None:
+        cfg["output"]["view_widen"] = min(35, max(0, int(args.widen))) / 100.0
+    if getattr(args, "corner_fill", None):
+        cfg["output"]["corner_fill"] = args.corner_fill
+    if getattr(args, "corner_avoid", None):
+        cfg["output"]["corner_avoid"] = args.corner_avoid
     if getattr(args, "face_panel", None):
         cfg["output"]["face_panel"] = min(0.6, max(0.15, float(args.face_panel)))
     kw = load_keywords(preset)
@@ -160,19 +286,30 @@ def cmd_analyze(args, cfg):
     game = resolve_input(args.input, P["input"] / "downloads").resolve()
     S = ST.load(cfg)
     info = ffprobe(str(game))
+    picker = getattr(args, "picker", None)
+    if picker:                                           # per-run choice from the start form; the saved settings stay as they are
+        S["highlight_engine"] = "supoclip" if picker == "supoclip" and not getattr(args, "more", 0) else "local"
+        log(f"highlight picking: {PICKER_LABEL[picker]}")
     dec = EN.decide(cfg, S, {"face": bool(args.face), "mic": bool(args.mic) or args.mic_track is not None})
     hl, rf = dec["highlight"], dec["reframe"]
     _marker(dec)
     log(f"highlight engine: {hl['use']} ({hl['reason']})")
     log(f"smart reframing: {rf['use']} ({rf['reason']})")
     sc_hl = None
+    manual = _parse_ranges(args.ranges, info["duration"]) if getattr(args, "ranges", None) else None
+    if manual and hl["use"] == "supoclip":
+        log("your own time ranges were given: SupoClip is not needed and is skipped")
+        hl = {**hl, "use": "local", "reason": "manual time ranges"}
     if hl["use"] == "supoclip":
         from . import supoclip_engine as SE
         try:
             if dec["render"] == "supoclip_files":      # SupoClip + Static Crop: SupoClip's own finished vertical MP4s (legacy behaviour)
                 return SE.run(game, cfg, P["output"] / game.stem, lambda pc, st: stage(st, pc), args.preset,
                               extra=_stage_meta(dec, OE_static("SupoClip renders its own vertical crop; OpenClipper reframing is not applied to its files")))
-            sc_hl = SE.highlights(game, cfg, lambda pc, st: stage(st, pc), duration=info["duration"])
+            _gt = getattr(args, "game_track", None)
+            _ast = info["audio"][int(_gt)]["index"] if info.get("audio") and _gt is not None and int(_gt) < len(info["audio"]) else None
+            sc_hl = SE.highlights(game, cfg, lambda pc, st: stage(st, pc), duration=info["duration"],
+                                  wd=workdir(game, getattr(args, "workdir", None) or P["cache"]), audio_stream=_ast)
             log(f"SupoClip chose {len(sc_hl)} highlight window(s); they are rendered locally from your recording")
         except Exception as e:
             log(f"SupoClip failed ({redact(e)[:200]}) - using Local AI highlights instead")
@@ -220,13 +357,48 @@ def cmd_analyze(args, cfg):
         log(f"auto face delay = {delay:+.2f}s (confidence {conf:.1f}; <6 means unreliable -> pass --face-delay)")
     delay = delay or 0.0
     stage("ranking highlights", 62)
-    if sc_hl:                                                         # SupoClip decided WHICH moments; the SONIVERSE plan/render builds the clips
+    keep = []
+    if manual:                                                        # YOUR time ranges: no ranking, every other step (layout, camera, effects, captions) as usual
+        first = 1
+        if getattr(args, "append", False):
+            old = (load_json(P["output"] / game.stem / "clips.json") or {}) if (P["output"] / game.stem / "clips.json").exists() else {}
+            keep = old.get("clips", [])
+            first = 1 + max([int(c["clip_id"][4:]) for c in keep if str(c.get("clip_id", "")).startswith("clip") and c["clip_id"][4:].isdigit()] or [0])
+        cands = _manual_cands(manual, tr, not getattr(args, "no_snap", False), first, info["duration"])
+        log(f"making {len(cands)} clip(s) from your time ranges" + (f" (added to the {len(keep)} existing clip(s))" if keep else ""))
+    elif sc_hl:                                                         # SupoClip decided WHICH moments; the SONIVERSE plan/render builds the clips
         cands = _supoclip_cands(sc_hl, sig, cfg["output"]["preview_clips"])
         for c in cands:
             c["text"] = " ".join(w["w"] for w in tr.get("words", []) if c["start"] <= w["s"] < c["end"])[:600] or c["text"]
+    elif getattr(args, "more", 0):                                    # N MORE clips: cached analysis, skip every moment already kept or rejected
+        mf = P["output"] / game.stem / "clips.json"
+        keep = (load_json(mf) or {}).get("clips", []) if mf.exists() else []
+        n_more = max(1, min(30, int(args.more)))
+        pool = RK.find_candidates(sig, tr, preset, kw, max_n=len(keep) + n_more * 4 + 8)
+        if picker == "smart":
+            pool = _smart_rerank(pool, cfg, args, game)
+        ov = lambda a, b: max(0.0, min(a["end"], b["end"]) - max(a["start"], b["start"])) / max(0.5, min(a["end"] - a["start"], b["end"] - b["start"]))
+        cands = []
+        for c in pool:
+            if all(ov(c, o) < 0.3 for o in keep + cands):
+                cands.append(c)
+            if len(cands) >= n_more:
+                break
+        first = 1 + max([int(c["clip_id"][4:]) for c in keep if str(c.get("clip_id", "")).startswith("clip") and c["clip_id"][4:].isdigit()] or [0])
+        for i, c in enumerate(cands):
+            c["clip_id"], c["rank"] = f"clip{first + i:02d}", first + i
+        rej = sum(1 for c in keep if c.get("rejected"))
+        log(f"found {len(cands)} more clip(s) (skipped moments of {len(keep)} existing clip(s), {rej} of them rejected)"
+            + ("" if len(cands) >= n_more else f" - only {len(cands)} new moment(s) left that do not repeat earlier clips"))
     else:
         cands = RK.find_candidates(sig, tr, preset, kw, max_n=cfg["output"]["preview_clips"])
-        cands = RK.llm_rerank(cands, cfg, args.yes, video=str(game))     # provider chain per Settings; heuristics-only if none available
+        if picker == "fast":
+            log("Fast picking: scoring only (motion, game sound, voice, keywords) - no AI re-ranking")
+            PV.LAST.update({"slot": "local", "model": "heuristics", "trace": []})
+        elif picker == "smart":
+            cands = _smart_rerank(cands, cfg, args, game)
+        else:
+            cands = RK.llm_rerank(cands, cfg, args.yes, video=str(game))     # provider chain per Settings; heuristics-only if none available
     has_mic = mstream is not None
     out = P["output"] / game.stem
     plans = []
@@ -296,8 +468,10 @@ def cmd_analyze(args, cfg):
                                    "ai_provider": PV.LAST["slot"] or "local", "ai_model": PV.LAST["model"], "ai_trace": PV.LAST["trace"],
                                    **_stage_meta(dec, None), "highlight_source": "supoclip" if sc_hl else "local",
                                    **({"openclipper": _oc_summary(oc_runs)} if use_oc else {}),
-                                   "clips": cands})
-    write_review(out, cands)
+                                   "picker": _picked_with(picker, sc_hl, P["output"] / game.stem / "clips.json", getattr(args, "more", 0)),
+                                   "run_args": _run_args(args, preset, cfg),
+                                   "clips": keep + cands})
+    write_review(out, keep + cands)
     save_json(P["projects"] / f"{game.stem}.json", {"source": str(game), "output": str(out), "preset": args.preset, "clips": len(cands),
                                                    "updated": time.strftime("%Y-%m-%d %H:%M:%S")})
     stage("done", 100)
@@ -370,6 +544,65 @@ def cmd_preview(args, cfg):
         if pl.get("tracking"):
             save_json(out / cid / "plan.json", pl)             # keeps render_camera (what the renderer applied) current for the tracking badge
         log(f"{cid} preview refreshed")
+    stage("done", 100)
+
+
+def cmd_restyle(args, cfg):
+    """Change the LOOK of already-cut clips (streamer ratio, gameplay view, webcam corner, layout) without re-analysing the video.
+    Only when the gameplay window gets a new shape is the smart camera re-planned - for that clip only. Then the preview is re-rendered."""
+    lower_priority(cfg)
+    P = paths(cfg)
+    out = pathlib.Path(args.clipsdir).resolve()
+    meta = load_json(out / "clips.json")
+    if meta.get("engine") == "supoclip":
+        raise SystemExit("These clips were made by SupoClip and are already final MP4s (no plan to re-style).")
+    game = pathlib.Path(meta["source"]); info = ffprobe(str(game))
+    face = pathlib.Path(meta["face"]) if meta.get("face") else None
+    finfo = ffprobe(str(face)) if face else None
+    wd = workdir(game, args.workdir or P["cache"])
+    a = argparse.Namespace(game_track=meta["args"]["game_track"], mic=meta["args"]["mic"], mic_track=meta["args"]["mic_track"])
+    ctx = _ctx(a, cfg, game, info, face, finfo, wd, True, meta.get("face_crop"), meta.get("face_mode") or "show")
+    ids = [c["clip_id"] for c in meta["clips"] if not c.get("rejected")] if args.clips in ("all", "", None) else \
+          [(c.strip() if c.strip().startswith("clip") else f"clip{int(c):02d}") for c in args.clips.split(",")]
+    S = ST.load(cfg)
+    from . import openclipper_engine as OE
+    for n, cid in enumerate(ids):
+        stage(f"restyling {cid}", int(100 * n / max(1, len(ids))))
+        pf = out / cid / "plan.json"
+        pl = load_json(pf)
+        if args.face_panel is not None:
+            pl["face_panel"] = min(0.6, max(0.15, float(args.face_panel)))
+        if args.view:
+            pl["view_mode"] = args.view
+        if args.widen is not None:
+            pl["view_widen"] = min(35, max(0, int(args.widen))) / 100.0
+        if args.corner_fill:
+            pl["corner_fill"] = args.corner_fill
+        if args.corner_avoid:
+            pl["corner_avoid"] = args.corner_avoid
+        if args.layout is not None:
+            pl.setdefault("overrides", {})["force_layout"] = None if args.layout in ("", "auto") else args.layout
+        need = {OE.aspect_key(w, h) for w, h in RN.plan_panels(pl, cfg, bool(face))}
+        have = set((pl.get("camera") or {}).get("tracks", {}).keys())
+        smart = (pl.get("tracking") or {}).get("state") not in (None, "static", "off") or bool(pl.get("camera"))
+        if smart and not need <= have:        # new gameplay shape: re-plan the smart camera for THIS clip (cached analysis, a few seconds)
+            try:
+                dv, di = (ctx["game_video"], ctx["game_info"]) if info["video"]["hdr"] else (str(game), info)
+                oc = S["openclipper"]
+                cam = OE.camera_for_plan(pl, dv, di, cfg, RN.plan_panels(pl, cfg, bool(face)), device=oc["device"], hero=oc["hero_lock"],
+                                         mask_rect=meta.get("face_crop"))
+                tk = OE.tracking_status(cam)
+                if tk["applied"]:
+                    pl["camera"] = cam
+                pl["tracking"] = tk
+                log(f"{cid}: smart camera re-planned for the new shape ({tk['label']})")
+            except Exception as e:
+                log(f"{cid}: smart camera could not be re-planned ({redact(str(e))[-160:]}) - this clip uses the static crop")
+                pl.pop("camera", None)
+        save_json(pf, pl)
+        RN.render_plan(pl, ctx, cfg, str(out / cid / "preview.mp4"), preview=True)
+        save_json(pf, pl)
+        log(f"{cid} restyled: streamer {pl.get('face_panel', 0.32):.0%}, view {pl.get('view_mode', 'natural')}, corner {pl.get('corner_fill', 'blur')} - preview refreshed")
     stage("done", 100)
 
 
@@ -577,6 +810,15 @@ def _common(a):
     a.add_argument("--layout", choices=["auto", "split", "pip", "circle", "reaction", "gameplay_voice", "game_audio"],
                    help="force ONE layout for every clip (auto = the preset decides). split = gameplay on top, streamer at the bottom")
     a.add_argument("--clip-len", help="clip length range in seconds, e.g. 30-120 (overrides the preset; 5-180)")
+    a.add_argument("--picker", choices=["fast", "smart", "supoclip"], help="how highlights are picked: fast = scoring only | smart = scoring + Ollama | supoclip")
+    a.add_argument("--more", type=int, default=0, help="find N MORE clips for an analysed video (keeps every existing clip, never repeats a kept or rejected moment)")
+    a.add_argument("--view", choices=["natural", "wide", "wide_blur", "classic"], help="gameplay view: natural | wide (more picture, stretched) | wide_blur (more picture, blurred fill) | classic (split framed like 50/50, stretched into its panel)")
+    a.add_argument("--widen", type=int, help="wide views: how much wider than natural, in percent (0-35, default 20)")
+    a.add_argument("--ranges", help="make clips from YOUR time ranges instead of finding highlights, e.g. '15:20-16:05, 1:02:10-1:03:40'")
+    a.add_argument("--append", action="store_true", help="with --ranges: add the clips to this video's existing clips instead of replacing them")
+    a.add_argument("--no-snap", action="store_true", help="with --ranges: keep the exact times (default: nudge start/end up to 1.5 s so no word is cut)")
+    a.add_argument("--corner-fill", choices=["blur", "logo"], help="what covers the webcam corner in the gameplay when it is in view")
+    a.add_argument("--corner-avoid", choices=["normal", "strong"], help="how hard the gameplay crop keeps the webcam corner out of view")
     a.add_argument("--face-panel", type=float, help="split layout: streamer panel height as a fraction (0.15-0.6, default config output.face_panel = 0.32)")
     a.add_argument("--facecam", choices=["show", "hide", "off"], help="a webcam INSIDE the recording: show = own panel (default) | hide = remove it from the picture | off = leave the video as it is")
     a.add_argument("--face-delay", type=float, default=None, help="seconds facecam lags gameplay; omit to auto-detect")
@@ -658,6 +900,12 @@ def main(argv=None):
     e.add_argument("--provider"); e.add_argument("--allow-paid", action="store_true")
     e.set_defaults(input=None)
     s = sp.add_parser("sync"); s.add_argument("game_audio"); s.add_argument("face_audio"); s.add_argument("--config")
+    mo = sp.add_parser("more"); mo.add_argument("--clipsdir", required=True); mo.add_argument("--count", type=int, default=3)
+    mo.add_argument("--picker", choices=["fast", "smart", "supoclip"]); mo.add_argument("--config")
+    rs = sp.add_parser("restyle"); rs.add_argument("--clipsdir", required=True); rs.add_argument("--clips", default="all")
+    rs.add_argument("--face-panel", type=float); rs.add_argument("--view", choices=["natural", "wide", "wide_blur", "classic"]); rs.add_argument("--widen", type=int)
+    rs.add_argument("--corner-fill", choices=["blur", "logo"]); rs.add_argument("--corner-avoid", choices=["normal", "strong"])
+    rs.add_argument("--layout", choices=["", "auto", "split", "gameplay_voice", "game_audio", "pip", "circle", "reaction"]); rs.add_argument("--workdir", default=None); rs.add_argument("--config")
     pv = sp.add_parser("preview"); pv.add_argument("--clipsdir", required=True); pv.add_argument("--clips", required=True); pv.add_argument("--workdir", default=None); pv.add_argument("--config")
     st = sp.add_parser("selftest"); st.add_argument("--config")
     d = sp.add_parser("doctor"); d.add_argument("--config"); d.add_argument("--deep", action="store_true")
@@ -692,6 +940,10 @@ def main(argv=None):
         cmd_selftest(args, cfg)
     elif args.cmd == "preview":
         cmd_preview(args, cfg)
+    elif args.cmd == "restyle":
+        cmd_restyle(args, cfg)
+    elif args.cmd == "more":
+        cmd_more(args, cfg)
     elif args.cmd == "sync":
         cmd_sync(args, cfg)
     elif args.cmd == "doctor":

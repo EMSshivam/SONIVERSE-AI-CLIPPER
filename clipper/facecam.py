@@ -217,6 +217,15 @@ def remove_graph(rect, src_chain, out_label="gsrc", pad=0.01):
             f"[fa][fp]overlay=x=trunc(W*{x0:.4f}):y=trunc(H*{y0:.4f})[{out_label}]")
 
 
+def logo_graph(rect, logo, in_label, out_label, fill=0.7):
+    """Your logo/sticker centred on the (already blur-filled) webcam corner, scaled to fill ~70% of it, aspect kept."""
+    x, y, w, h = rect
+    p = str(logo).replace("\\", "/").replace(":", "\\:").replace("'", "")
+    return (f"movie='{p}',format=rgba,loop=-1:1:0[lgsrc];[lgsrc][{in_label}]scale2ref=w='trunc(main_w*{w * fill:.4f}/2)*2':h='trunc(main_h*{h * fill:.4f}/2)*2':"
+            f"force_original_aspect_ratio=decrease[lg][gb2];"
+            f"[gb2][lg]overlay=x='W*{x + w / 2:.4f}-w/2':y='H*{y + h / 2:.4f}-h/2':shortest=1:format=auto[{out_label}]")
+
+
 def shift_clear(x, win_w, frame_w, rect_x, rect_w, max_shift=0.3):
     """Move a crop window sideways so it no longer overlaps the webcam column, but ONLY when that costs less than max_shift of the window width
     (the subject the window is centred on must stay well inside it). -> new x (unchanged when nothing needs / can be done)."""

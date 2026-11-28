@@ -90,11 +90,18 @@ def supoclip_status(cfg, S=None):
         why.append("No SupoClip API key. Press Open SupoClip, create your account, then Settings > Agents & API > create a key and save it here. "
                    "If SupoClip asks for email verification, its .env needs email delivery (AWS_* / SES) first - SupoClip's own docs are not consistent about whether a self-hosted copy needs that.")
     up = _http_ok(sc["url"] + "/docs")
+    worker_up = None
+    if docker and _DK.get("ok"):
+        r = sh([docker, "ps", "--filter", "name=supoclip-worker", "--format", "{{.Status}}"], check=False)
+        worker_up = r.returncode == 0 and (r.stdout or "").strip().lower().startswith("up")
+        if up and not worker_up:
+            why.append("SupoClip's video worker is stopped (the website/backend still runs) - press Start SupoClip.")
     if up and os.environ.get(ST.KEY_ENV["supoclip"]) and _key_rejected(sc["url"], os.environ[ST.KEY_ENV["supoclip"]]):
         why.append("SupoClip rejected the saved API key (HTTP 401/403). Create a new key in SupoClip (Settings > Agents & API) and save it here.")
     if not up:
         why.append(f"SupoClip backend is not reachable at {sc['url']} (start it with the Start button or `docker compose up -d`).")
-    return {"available": not why, "reasons": why, "backend_up": up, "docker": bool(docker), "docker_running": bool(docker) and bool(_DK.get("ok")), "license_url": LICENSE_URL,
+    state = "stopped" if not up else ("running" if worker_up in (True, None) else "partial")
+    return {"available": not why, "reasons": why, "backend_up": up, "worker_up": worker_up, "state": state, "docker": bool(docker), "docker_running": bool(docker) and bool(_DK.get("ok")), "license_url": LICENSE_URL,
             "local_transcription": bool(sc["local_whisper_configured"]), "installed": installed}
 
 

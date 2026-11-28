@@ -587,7 +587,7 @@ def run_chain(items, cfg, video=None, only=None):
         if slot == "local":
             res, used = {}, "heuristics"
             P = S["providers"]["local"]
-            if P["use_ollama"] and ollama_up(cfg):
+            if (P["use_ollama"] or os.environ.get("SV_FORCE_OLLAMA") == "1") and ollama_up(cfg):
                 try:
                     res, used = _ask_local(items, S, cfg, video), "local-ollama"
                 except Exception as e:

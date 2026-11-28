@@ -89,6 +89,31 @@ def _output_args(body):
         lo, hi = int(cl0 or 5), int(cl1 or 180)
         if not 5 <= lo < hi <= 180: raise ValueError("clip length: min 5 s, max 180 s, min below max")
         a += ["--clip-len", f"{lo}-{hi}"]
+    pk = str(body.get("picker") or "").strip()
+    if pk:
+        if pk not in ("fast", "smart", "supoclip"): raise ValueError("bad picker")
+        a += ["--picker", pk]
+    vw = str(body.get("view") or "").strip()
+    if vw:
+        if vw not in ("natural", "wide", "wide_blur", "classic"): raise ValueError("bad gameplay view")
+        a += ["--view", vw]
+    wd_ = str(body.get("widen") or "").strip()
+    if wd_:
+        if not re.fullmatch(r"\d{1,2}", wd_) or int(wd_) > 35: raise ValueError("wider view must be 0-35 %")
+        a += ["--widen", wd_]
+    rg = str(body.get("ranges") or "").strip()
+    if rg:
+        if len(rg) > 2000 or not re.fullmatch(r"[\d:.,;\s\-\u2013to]+", rg): raise ValueError("time ranges look like 15:20-16:05, 1:02:10-1:03:40")
+        a += ["--ranges", rg]
+        if body.get("append"): a += ["--append"]
+        if body.get("snap") is False: a += ["--no-snap"]
+    cf, ca = str(body.get("corner_fill") or "").strip(), str(body.get("corner_avoid") or "").strip()
+    if cf:
+        if cf not in ("blur", "logo"): raise ValueError("corner fill must be blur or logo")
+        a += ["--corner-fill", cf]
+    if ca:
+        if ca not in ("normal", "strong"): raise ValueError("corner avoid must be normal or strong")
+        a += ["--corner-avoid", ca]
     fp = str(body.get("face_panel") or "").strip()
     if fp:
         if not re.fullmatch(r"\d{1,2}", fp) or not 15 <= int(fp) <= 60: raise ValueError("streamer size must be 15-60 %")
@@ -177,14 +202,16 @@ def _project(P, name):
                       "title": plan.get("title", ""), "rejected": bool(c.get("rejected")), "text": c.get("text", "")[:240], "ranked_by": c.get("ranked_by", "heuristics"),
                       "layouts": [(l["layout"], l["s"], l["e"]) for l in plan["layouts"]],
                       "effects": {k: len(v) for k, v in plan["effects"].items()},
-                      "overrides": plan.get("overrides", {}), "captions": " ".join(w["w"] for w in plan["captions"]["words"]),
+                      "overrides": plan.get("overrides", {}), "look": {"face_panel": plan.get("face_panel", 0.32), "view": plan.get("view_mode", "natural"),
+                                                                     "widen": plan.get("view_widen", 0.2), "corner_fill": plan.get("corner_fill", "blur"),
+                                                                     "corner_avoid": plan.get("corner_avoid", "normal")}, "captions": " ".join(w["w"] for w in plan["captions"]["words"]),
                       "preview": f"{c['clip_id']}/preview.mp4" if (cd / "preview.mp4").exists() else None, "finals": finals,
                       "capcut": (cd / "capcut").exists(),
                       "tracking": _tracking_view(plan, m),
                       "camera": ({"engine": "openclipper", "providers": plan["camera"].get("providers"), "detector": plan["camera"].get("detector"),
                                   "shots": len(plan["camera"].get("scene_cuts", [])) + 1, "subjects": plan["camera"].get("subjects_seen"),
                                   "seconds": plan["camera"].get("seconds")} if plan.get("camera") else None)})
-    return {"name": name, "source": m["source"], "face": m.get("face"), "preset": m["preset"], "timings": m.get("timings"), "clips": clips,
+    return {"name": name, "picker": m.get("picker"), "source": m["source"], "face": m.get("face"), "preset": m["preset"], "timings": m.get("timings"), "clips": clips,
             "engine": m.get("engine", "local"), "ai_provider": m.get("ai_provider"), "engine_reason": m.get("engine_reason"),
             **_stages_of(m), "highlight_source": m.get("highlight_source"), "openclipper": m.get("openclipper")}
 
@@ -348,7 +375,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"presets": [{"id": k, "label": v.get("label", k), "group": v.get("group", "Other"), "len": v["clip_len"], "mode": v["layout_mode"]} for k, v in pr.items()],
                                         "inputs": inp, "inputDir": str(self.P["input"]), "outputDir": str(self.P["output"]), "projects": _projects(self.P),
                                         "jobs": [_job_view(j, 4) for j in sorted(JOBS.values(), key=lambda j: -j["started"])][:8],
-                                        "highlight_engine": ST.load(self.cfg)["highlight_engine"], "reframe_engine": ST.load(self.cfg)["reframe_engine"], "chain": ST.load(self.cfg)["priority"], "chainLabels": {x: ST.label(ST.load(self.cfg), x) for x in ST.load(self.cfg)["priority"]},
+                                        "highlight_engine": ST.load(self.cfg)["highlight_engine"], "use_ollama": bool(ST.load(self.cfg)["providers"]["local"].get("use_ollama")), "reframe_engine": ST.load(self.cfg)["reframe_engine"], "chain": ST.load(self.cfg)["priority"], "chainLabels": {x: ST.label(ST.load(self.cfg), x) for x in ST.load(self.cfg)["priority"]},
                                         "encoder": pick_encoder(self.cfg.get("encoder", "auto")), "hardware": self._hw_summary(),
                                         "optimize": self._opt_info(), "defaults": {"resolution": self.cfg["output"].get("resolution_px", 1080), "aspect": self.cfg["output"].get("aspect", "9:16")}})
             if u.path == "/api/ai/state": return self._send(200, self._ai_state())
@@ -432,6 +459,35 @@ class H(BaseHTTPRequestHandler):
                 a += _output_args(body)
                 if body.get("force"): a += ["--force"]
                 return self._send(200, {"id": _spawn("export", a, self.P, f"export {body['project']}")})
+            if u == "/api/more":            # {project, count, picker?}
+                d = (self.P["output"] / body["project"]).resolve()
+                if self.P["output"].resolve() not in d.parents: return self._send(400, {"error": "bad path"})
+                n = int(body.get("count") or 3)
+                if not 1 <= n <= 30: return self._send(400, {"error": "1-30 clips"})
+                a = ["more", "--clipsdir", str(d), "--count", str(n)]
+                if body.get("picker") in ("fast", "smart"): a += ["--picker", body["picker"]]
+                return self._send(200, {"id": _spawn("more", a, self.P, f"more clips {body['project']}")})
+            if u == "/api/restyle":        # {project, clips: [ids] | "all", face_panel, view, widen, corner_fill, corner_avoid, layout}
+                d = (self.P["output"] / body["project"]).resolve()
+                if self.P["output"].resolve() not in d.parents: return self._send(400, {"error": "bad path"})
+                cl = body.get("clips") or "all"
+                cl = "all" if cl == "all" else ",".join(x for x in cl if re.fullmatch(r"clip\d{1,3}", x))
+                a = ["restyle", "--clipsdir", str(d), "--clips", cl or "all"]
+                fp = str(body.get("face_panel") or "").strip()
+                if fp:
+                    if not re.fullmatch(r"\d{1,2}", fp) or not 15 <= int(fp) <= 60: return self._send(400, {"error": "streamer size must be 15-60 %"})
+                    a += ["--face-panel", f"{int(fp) / 100:.2f}"]
+                for k, f, ok in (("view", "--view", ("natural", "wide", "wide_blur", "classic")), ("corner_fill", "--corner-fill", ("blur", "logo")),
+                                 ("corner_avoid", "--corner-avoid", ("normal", "strong")), ("layout", "--layout", ("auto", "split", "gameplay_voice", "game_audio", "pip", "circle", "reaction"))):
+                    v = str(body.get(k) or "").strip()
+                    if v:
+                        if v not in ok: return self._send(400, {"error": f"bad {k}"})
+                        a += [f, v]
+                wv = str(body.get("widen") or "").strip()
+                if wv:
+                    if not re.fullmatch(r"\d{1,2}", wv) or int(wv) > 35: return self._send(400, {"error": "wider must be 0-35 %"})
+                    a += ["--widen", wv]
+                return self._send(200, {"id": _spawn("restyle", a, self.P, f"restyle {body['project']}")})
             if u == "/api/preview":
                 a = ["preview", "--clipsdir", str(self.P["output"] / body["project"]), "--clips", ",".join(body["clips"])]
                 return self._send(200, {"id": _spawn("preview", a, self.P, f"preview {body['project']}")})
@@ -694,6 +750,55 @@ pre{white-space:pre-wrap;color:var(--mut);font:12px Consolas,"Cascadia Mono",mon
 @media (max-width:1100px){#studioView{grid-template-columns:1fr}.clip{grid-template-columns:160px minmax(0,1fr)}}
 @media (max-width:820px){.app{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;align-items:center;gap:10px;padding:10px 12px;overflow:visible;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0}.brand span,.sfoot{display:none}.nav{flex-direction:row;margin-left:auto}.nav button{padding:8px 10px}.nav button span.lb{display:none}.nav button.on::before{display:none}#studioView,.ph{padding-left:14px;padding-right:14px}.clip{grid-template-columns:1fr}.clip video{max-width:240px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---- layout robustness: nothing may spill out of its box ---- */
+.row>*{min-width:0}.row{flex-wrap:nowrap}
+select{appearance:none;-webkit-appearance:none;padding-right:30px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;
+ background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa2b6' stroke-width='2.4'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+ background-repeat:no-repeat;background-position:right 10px center}
+select option{background:#151821;color:var(--tx)}
+label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chk label{white-space:normal;margin:0;color:var(--tx);font-size:13.5px}
+input,select,textarea{transition:border-color .15s,box-shadow .15s}input:hover,select:hover,textarea:hover{border-color:var(--line2)}
+input:focus,select:focus,textarea:focus{border-color:#6b5f1a;box-shadow:0 0 0 3px rgba(255,212,0,.12);outline:none}
+#studioView{grid-template-columns:minmax(380px,470px) minmax(0,1fr)}
+/* sidebar: long paths and names never break the panel */
+.side{width:236px}.sfoot,.specs{min-width:0}.sfoot>*,.specs>*{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#hdr{display:grid;gap:4px}#hdr>*{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brand b,.brand span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* grouped cards in the setup rail */
+.grp{background:linear-gradient(180deg,#1b1f2b,#171a23);border:1px solid var(--line);border-radius:14px;padding:12px 14px 14px;margin:0 0 12px;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
+.grp>.gt{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--acc);font-weight:750;margin-bottom:2px;display:flex;align-items:center;gap:8px}
+.grp>.gt::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line2),transparent)}
+.sg2{display:flex;width:100%;gap:3px;background:var(--well);border:1px solid var(--line);border-radius:11px;padding:3px;margin-top:2px;min-width:0}
+.sg2 button{flex:1;min-width:0;border:0;background:transparent;padding:7px 6px;font-size:12.5px;color:var(--mut);border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sg2 button:hover{background:#171b26;color:var(--tx)}.sg2 button.on{background:var(--raise);color:var(--tx);box-shadow:0 0 0 1px var(--line2) inset,0 2px 8px rgba(0,0,0,.25)}
+#modeSeg{margin:6px 0 2px}#modeSeg button.on{color:var(--acc)}
+.ratio{display:flex;gap:8px;align-items:center}.ratio .sg2{flex:1;margin:0}
+.num{position:relative;min-width:0}.num input{padding-right:24px}.num span{position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--mut);font-size:12px;pointer-events:none}
+.ratio .num{flex:0 0 78px}
+input:disabled{opacity:.6}
+/* clip cards: look controls never overflow */
+.clip .row select,.clip .row input{min-width:0}
+.clip details{background:var(--well);border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.clip details>summary{font-weight:600}
+.cprog{margin:8px 0 4px;padding:9px 11px;border:1px solid #3a3416;background:linear-gradient(90deg,rgba(255,212,0,.08),rgba(255,212,0,.02));border-radius:10px}
+.cprog .cpt{display:flex;justify-content:space-between;gap:8px;font-size:13px}.cprog .cpl{color:var(--tx);font-weight:600}.cprog .cpp{color:var(--acc)}
+.cprog .bar{margin:6px 0 4px}.cprog .bar i{background:linear-gradient(90deg,#ffd400,#ffb000);transition:width .5s}
+.cprog.ind .bar i{width:35%!important;animation:cpi 1.2s ease-in-out infinite alternate}@keyframes cpi{from{margin-left:0}to{margin-left:65%}}
+.cprog.done{border-color:#2c4a39;background:rgba(85,211,154,.08)}.cprog.done .bar i{background:var(--ok)}.cprog.done .cpp{color:var(--ok)}
+.cprog.fail{border-color:#5a2a2a;background:rgba(255,122,122,.08)}.cprog.fail .bar i{background:var(--bad)}.cprog.fail .cpp{color:var(--bad)}
+.morebar{margin-bottom:10px;position:static}#morePick{flex:0 0 auto;width:auto!important}#morePick button{flex:0 0 auto;width:auto;padding:6px 14px;overflow:visible}
+#pickSeg{margin:2px 0 10px}#pickSeg button.on{color:var(--acc)}
+.ltiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+.ltiles button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:7px 4px 6px;background:var(--well);border:1px solid var(--line);border-radius:10px;color:var(--mut);font-size:11.5px;min-width:0}
+.ltiles button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ltiles button:hover{border-color:var(--line2);color:var(--tx);transform:translateY(-1px)}
+.ltiles button.on{border-color:var(--acc);color:var(--tx);box-shadow:0 0 0 3px rgba(255,212,0,.12)}
+.ltiles svg{width:30px;height:54px}
+.lprev{display:flex;gap:14px;align-items:center;margin-top:12px;padding:10px;border:1px dashed var(--line2);border-radius:12px;background:rgba(14,16,23,.6)}
+.lprev #lpv{flex:none;filter:drop-shadow(0 4px 14px rgba(0,0,0,.45))}.lpinfo{min-width:0}.lpinfo b{display:block;font-size:13.5px;margin-bottom:2px}
+@media (max-width:1100px){#studioView{grid-template-columns:1fr}}
 __CSS__</style>
 <div class=app>
 <aside class=side>
@@ -724,22 +829,48 @@ __CSS__</style>
   </details>
  </li>
  <li data-n=2><h2>Choose a style</h2>
-  <label for=preset>Preset</label><select id=preset></select><div class=small id=pinfo style="margin-top:4px"></div>
-  <div class=row><div><label for=asp>Aspect ratio (shape)</label><select id=asp onchange=sizeNote()><option value="9:16">9:16 Vertical - Shorts / Reels / TikTok</option><option value="4:5">4:5 Portrait - Instagram / Facebook feed</option><option value="3:4">3:4 Portrait</option><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape - YouTube / widescreen</option></select></div>
-   <div><label for=res>Resolution</label><select id=res onchange=sizeNote()><option value="480">480p (small, fastest)</option><option value="720">720p HD</option><option value="1080" selected>1080p Full HD</option><option value="1440">1440p 2K</option><option value="2160">2160p 4K (slowest, biggest files)</option></select></div></div>
-  <div class=small id=szn style="margin-top:4px"></div>
-  <div class=chk><input type=checkbox id=capon checked><label for=capon style="margin:0;color:var(--tx);font-size:13.5px">Burn captions into the video <span class=small>(untick for clips without subtitles; the CapCut bundle still gets a .srt file)</span></label></div>
-  <label for=fcm>Streamer / webcam inside the video <span class=small>(16:9 streams with the webcam in a corner)</span></label>
-  <select id=fcm><option value="show">Show the streamer (own panel) - if a webcam is found</option><option value="hide">Remove the streamer completely</option><option value="off">Leave the video as it is</option></select>
-  <div class=row><div><label for=lay>Layout <span class=small>(your choice wins over the preset)</span></label>
-   <select id=lay><option value="auto">Automatic (preset decides)</option><option value="split" selected>Gameplay top + streamer bottom</option><option value="pip">Gameplay + small streamer box</option><option value="circle">Gameplay + round streamer bubble</option><option value="reaction">Big streamer top + gameplay bottom</option><option value="gameplay_voice">Gameplay only (keep voice)</option></select></div>
-   <div><label for=fpn>Streamer size at the bottom (%)</label><input id=fpn type=number min=15 max=60 value=32></div></div>
-  <div class=row><div><label for=cmin>Clip length: shortest (seconds)</label><input id=cmin type=number min=5 max=175 placeholder="preset"></div>
-   <div><label for=cmax>Clip length: longest (seconds, up to 180)</label><input id=cmax type=number min=10 max=180 placeholder="preset"></div></div>
-  <div class=small style="margin-top:4px">Leave empty to use the preset's length. Clips are at least the shortest length and at most the longest, so for clips of about 2 minutes use 110 and 130.</div>
-  <label for=cnt>How many clips to find</label><input id=cnt type=number min=1 max=60 value=12>
-  <div class=small style="margin-top:4px">You decide. A good start is about 1 clip per 5-10 minutes of footage (a 1-hour video: 6-12 clips). More clips = more processing time and more previews to review.</div>
-  <button class="ghost s" style="margin-top:8px" onclick="post('/api/edit-presets',{})">Edit presets</button>
+  <div class=grp><div class=gt>Style</div>
+   <label for=preset>Preset</label><select id=preset></select><div class=small id=pinfo style="margin-top:4px"></div>
+   <div class=row><div><label for=asp>Shape</label><select id=asp onchange=sizeNote()><option value="9:16">9:16 Vertical (Shorts)</option><option value="4:5">4:5 Portrait (feed)</option><option value="3:4">3:4 Portrait</option><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape</option></select></div>
+    <div><label for=res>Resolution</label><select id=res onchange=sizeNote()><option value="480">480p</option><option value="720">720p</option><option value="1080" selected>1080p</option><option value="1440">1440p (2K)</option><option value="2160">2160p (4K)</option></select></div></div>
+   <div class=small id=szn style="margin-top:4px"></div>
+   <div class=chk><input type=checkbox id=capon checked><label for=capon>Burn captions into the video</label></div>
+  </div>
+  <div class=grp><div class=gt>Streamer &amp; layout</div>
+   <label for=fcm>Webcam inside the recording</label>
+   <select id=fcm><option value="show">Show the streamer in a panel</option><option value="hide">Remove the streamer</option><option value="off">Leave the video as it is</option></select>
+   <label>Layout</label>
+   <div class=ltiles id=ltiles></div>
+   <select id=lay class=hide><option value="auto">Automatic (preset decides)</option><option value="split" selected>Gameplay top + streamer bottom</option><option value="pip">Gameplay + small streamer box</option><option value="circle">Gameplay + round bubble</option><option value="reaction">Big streamer top + gameplay</option><option value="gameplay_voice">Gameplay only (keep voice)</option></select>
+   <label>Gameplay : streamer</label>
+   <div class=ratio><div class=sg2 id=rtoSeg>
+     <button type=button data-v="50" title="Gameplay 50% / streamer 50% - widest gameplay crop, big face">50:50</button><button type=button data-v="40" title="Gameplay 60% / streamer 40% - more gameplay width, bigger face">60:40</button><button type=button data-v="35" title="Gameplay 65% / streamer 35% - balanced">65:35</button><button type=button data-v="32" class=on title="Gameplay 68% / streamer 32% - webcam fits without cropping">68:32</button><button type=button data-v="25" title="Gameplay 75% / streamer 25% - tallest gameplay, small face">75:25</button></div>
+    <div class=num><input id=fpn type=number min=15 max=60 value=32 title="Streamer height in % (15-60)"><span>%</span></div></div>
+   <div class=row><div><label for=vwm>Gameplay view</label><select id=vwm title="How the gameplay fills its panel"><option value="natural" title="True proportions">Natural</option><option value="wide_blur" title="More picture, blurred bars above and below, no stretch">Wider + blur fill</option><option value="wide" title="More picture, squeezed to fit (stretch)">Wider (stretched)</option><option value="classic" title="Gameplay framed like a 50:50 split, stretched to fill">Classic stretch (50:50 look)</option></select></div>
+    <div style="flex:0 0 108px"><label for=wdn>Wider by</label><div class=num><input id=wdn type=number min=0 max=35 value=20><span>%</span></div></div></div>
+   <div class=row><div><label for=cfl>Webcam corner</label><select id=cfl><option value="blur">Blur it</option><option value="logo">Show my logo</option></select></div>
+    <div><label for=cav>Keep crop off corner</label><select id=cav><option value="normal">Normal</option><option value="strong">Strong</option></select></div></div>
+   <div class=lprev><div id=lpv></div><div class=lpinfo><b id=lpt1></b><div id=lpt2 class=small></div><div id=lpt3 class=small></div></div></div>
+   <div class=small style="margin-top:6px">Gameplay view, ratio and corner can also be changed per clip after cutting.</div>
+  </div>
+  <div class=grp><div class=gt>Which moments</div>
+   <label>How to pick highlights</label>
+   <div class=sg2 id=pickSeg><button type=button data-p="fast" class=on title="Scoring only: motion, game sound, your voice, keywords. Same result every time, fastest">Fast</button><button type=button data-p="smart" title="Scoring + Ollama reads the transcript and re-orders (funny / commentary / story)">Smart (Ollama)</button><button type=button data-p="supoclip" title="SupoClip picks the moments (slower; uses its own transcript + your Gemini key)">SupoClip</button></div>
+   <div class=sg2 id=modeSeg><button type=button data-m="auto" class=on>Find highlights for me</button><button type=button data-m="manual">My own time ranges</button></div>
+   <div id=autoBox>
+    <div class=row><div><label for=cnt>How many clips</label><input id=cnt type=number min=1 max=60 value=12></div>
+     <div><label for=cmin>Shortest (s)</label><input id=cmin type=number min=5 max=175 placeholder="preset"></div>
+     <div><label for=cmax>Longest (s)</label><input id=cmax type=number min=10 max=180 placeholder="preset"></div></div>
+    <div class=small style="margin-top:6px">About 1 clip per 5-10 min of footage. Empty length = the preset's. For ~2-minute clips use 110 and 130.</div>
+   </div>
+   <div id=manBox class=hide>
+    <label for=rng>Time ranges</label>
+    <textarea id=rng rows=2 placeholder="15:20-16:05, 1:02:10-1:03:40"></textarea>
+    <div class=chk><input type=checkbox id=rapp><label for=rapp>Add to this video's existing clips</label></div>
+    <div class=chk><input type=checkbox id=rsnp checked><label for=rsnp>Nudge start/end (max 1.5 s) so no word is cut</label></div>
+   </div>
+  </div>
+  <button class="ghost s" onclick="post('/api/edit-presets',{})">Edit presets</button>
  </li>
  <li data-n=3><h2>Find highlights</h2>
   <div class=chk style="margin-top:0"><input type=checkbox id=exp><label for=exp style="margin:0;color:var(--tx);font-size:13.5px">Also export finals and CapCut bundles for the top clips</label></div>
@@ -800,7 +931,7 @@ function estUpdate(){clearTimeout(_estT);_estT=setTimeout(async()=>{const box=$(
  box.innerHTML=`<b>Estimated time: ${esc(e.text)}</b> <span class=small>for a ${fmtS(e.duration_s)} video (${esc(e.basis)}).${e.note?' '+esc(e.note)+'.':''}</span><details class=how><summary>Where the time goes</summary><div class=small>${e.stages.map(s=>`${esc(s.label)}: ${fmtS(s.seconds)}`).join('<br>')}</div></details>`},350)}
 async function state(){S=await (await fetch('/api/state')).json();renderSpecs(S.hardware);
  if(S.defaults&&!window._resSet){window._resSet=1;const rs=$('res');if(rs){rs.value=String(S.defaults.resolution);sizeNote()}}
- $('hdr').innerHTML=`<div>Encoder <b>${({nvenc:'NVIDIA NVENC',videotoolbox:'Apple VideoToolbox',amf:'AMD AMF',qsv:'Intel QSV'})[S.encoder]||'CPU x264'}</b></div><div>Highlights <b>${esc(HLN[S.highlight_engine]||S.highlight_engine)}</b></div><div>Reframing <b>${esc(RFN[S.reframe_engine]||S.reframe_engine)}</b></div><div title="${esc(S.inputDir)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Input folder <b>${esc(S.inputDir)}</b></div>`;
+ $('hdr').innerHTML=`<div>Encoder <b>${({nvenc:'NVIDIA NVENC',videotoolbox:'Apple VideoToolbox',amf:'AMD AMF',qsv:'Intel QSV'})[S.encoder]||'CPU x264'}</b></div><div>Highlights <b>${S.highlight_engine==='local'?(S.use_ollama?'Smart (Ollama)':'Fast'):esc(HLN[S.highlight_engine]||S.highlight_engine)}</b></div>${(()=>{if(!PICK_SET&&$('pickSeg')){PICK=S.highlight_engine==='supoclip'?'supoclip':(S.use_ollama?'smart':'fast');$('pickSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===PICK))}return ''})()}<div>Reframing <b>${esc(RFN[S.reframe_engine]||S.reframe_engine)}</b></div><div title="${esc(S.inputDir)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Input folder <b>${esc(S.inputDir)}</b></div>`;
  $('engline').textContent=`Highlights: ${HLN[S.highlight_engine]} \u00b7 Smart reframing: ${RFN[S.reframe_engine]} · AI chain: ${S.chain.map(x=>(S.chainLabels||{})[x]||x).join(' \u2192 ')} (change in Settings)`;
  if(!$('preset').options.length){{const g={};S.presets.forEach(p=>(g[p.group||'Other']=g[p.group||'Other']||[]).push(p));$('preset').innerHTML=Object.entries(g).map(([n,l])=>`<optgroup label="${esc(n)}">`+l.map(p=>`<option value=${p.id}>${esc(p.label)}</option>`).join('')+'</optgroup>').join('')};$('preset').value='funny_moments';pinfo()}
  $('preset').onchange=()=>{pinfo();estUpdate()};if(!window._estBound){window._estBound=1;['inputs','cnt','exp'].forEach(i=>$(i)&&$(i).addEventListener('change',estUpdate));$('src').addEventListener('input',estUpdate);cnt.addEventListener('input',estUpdate)}
@@ -823,7 +954,7 @@ const dz=$('drop');['dragenter','dragover'].forEach(e=>document.addEventListener
 document.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(!f)return;const t=ev.dataTransfer.getData('text');
  const p=E?E.pathForFile(f):'';if(p)src.value=p;else if(t)src.value=t;else alert('Drag-and-drop needs the desktop app - use Browse or paste the path.')});
 async function start(){if(!src.value)return alert('Pick a video first');
- const r=await post('/api/start',{input:src.value,face:face.value,mic:mic.value,game_track:gt.value,mic_track:mt.value,preset:preset.value,allow_paid:paid.checked,export:exp.checked,aspect:asp.value,resolution:res.value,count:cnt.value,captions:capon.checked?'on':'off',facecam:fcm.value,layout:lay.value,face_panel:fpn.value,clip_min:cmin.value,clip_max:cmax.value});
+ const r=await post('/api/start',{input:src.value,face:face.value,mic:mic.value,game_track:gt.value,mic_track:mt.value,preset:preset.value,allow_paid:paid.checked,export:exp.checked,aspect:asp.value,resolution:res.value,count:cnt.value,captions:capon.checked?'on':'off',facecam:fcm.value,layout:lay.value,face_panel:fpn.value,clip_min:cmin.value,clip_max:cmax.value,corner_fill:cfl.value,corner_avoid:cav.value,picker:PICK,view:vwm.value,widen:wdn.value,ranges:(MODE==='manual'?rng.value:''),append:rapp.checked,snap:rsnp.checked});
  if(r.error)alert(r.error);else{toast('Started. Progress shows under Activity.','good');state()}}
 function sizeFor(a,r){const[x,y]=a.split(':').map(Number),e=v=>Math.max(2,Math.round(v/2)*2);return x<=y?[e(r),e(r*y/x)]:[e(r*x/y),e(r)]}
 function sizeNote(){const[w,h]=sizeFor(asp.value,+res.value);$('szn').textContent=`Output: ${w} x ${h} px`}
@@ -832,11 +963,19 @@ async function loadProj(keep){const n=$('proj').value;if(!n)return;PR=await (awa
  const ch=(k,v)=>`<span class=chip>${k} <b>${v}</b></span>`;
  $('pmeta').innerHTML=`<div class=chips>${ch('Highlights',esc(HLN[PR.highlight_engine]||PR.highlight_engine)+(PR.highlight_source=='supoclip'?' (SupoClip timestamps, rendered locally)':''))}${ch('Reframing',esc(RFN[PR.reframe_engine]||PR.reframe_engine))}${PR.ai_provider?ch('AI',esc(PR.ai_provider)):''}${PR.face?ch('Facecam',esc(PR.face)):''}${PR.face_crop?ch('Facecam',PR.face_mode=='hide'?'found inside the video - removed':'found inside the video - shown'):''}${ch('Transcription',(PR.timings?.transcribe_s??'-')+'s')}${ch('Analysis',(PR.timings?.signals_s??'-')+'s')}${PR.openclipper?ch('Tracking',esc(['followed','held','partial','no_subject','failed'].filter(k=>PR.openclipper[k]).map(k=>PR.openclipper[k]+' '+k.replace('_',' ')).join(', ')||'none')):''}</div><div class=small style="overflow-wrap:anywhere">Source: ${esc(PR.source)}</div>${PR.engine_reason?`<details><summary>Why this engine was used</summary><div class=small style="margin-top:6px">${esc(PR.engine_reason)}</div></details>`:''}`;
  const open=new Set([...document.querySelectorAll('details[open]')].map(d=>d.id));
- $('clips').innerHTML=`<div class=bar2><label><input type=checkbox id=selall onchange="selAll(this.checked)">Select all</label><span class=grow id=selN></span><select id=exAsp title="Shape of the exported video"><option value="">Same shape${PR.aspect?' ('+PR.aspect+')':''}</option><option value="9:16">9:16 Vertical - Shorts / Reels / TikTok</option><option value="4:5">4:5 Portrait - Instagram / Facebook feed</option><option value="3:4">3:4 Portrait</option><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape - YouTube / widescreen</option></select><select id=exRes title="Resolution of the exported video"><option value="1080">1080p Full HD</option><option value="720">720p HD</option><option value="1440">1440p 2K</option><option value="2160">2160p 4K</option><option value="480">480p</option></select><select id=exCap title="Captions in the exported video"><option value="">Captions as planned</option><option value="on">Captions on</option><option value="off">Captions off</option></select><button class=s onclick="doExport()" data-need>Export selected</button><button class="s" onclick=redoPreview() data-need>Refresh previews</button></div>`+
- PR.clips.map(c=>`<article class="card clip"><div>${c.preview?`<video controls preload=metadata src="/files/${encodeURIComponent(PR.name)}/${c.preview}"></video>`:'<div class=vnone>no preview</div>'}</div>
+ const nRej=PR.clips.filter(c=>c.rejected).length,PKL={fast:'Fast',smart:'Smart (Ollama)',supoclip:'SupoClip'};
+ $('clips').innerHTML=`<div class="bar2 morebar"><span class=chip>Picked with <b>${esc(PKL[PR.picker]||'not recorded')}</b></span><span class=grow></span>
+  <div class=sg2 id=morePick style="width:auto"><button type=button data-p="fast" class="${PR.picker!=='smart'?'on':''}">Fast</button><button type=button data-p="smart" class="${PR.picker==='smart'?'on':''}">Smart</button></div>
+  <input id=moreN type=number min=1 max=30 value=3 style="width:64px" title="How many more clips">
+  <button class=s onclick="findMore()" title="Finds new moments that do not repeat any kept or rejected clip (no re-analysis)">Find more clips</button>
+  ${nRej?`<button class="ghost s" onclick="findMore(${nRej})" title="Find as many new clips as you rejected">Replace ${nRej} rejected</button>`:''}</div>
+ <div class="cprog ${WATCH['_more']?'':'hide'}" id="cp_more" style="margin:0 0 10px"><div class=cpt><span class=cpl>Finding more clips</span><b class=cpp>0%</b></div><div class=bar><i style="width:0%"></i></div><div class="small cps">starting...</div></div>
+ <div class=bar2><label><input type=checkbox id=selall onchange="selAll(this.checked)">Select all</label><span class=grow id=selN></span><select id=exAsp title="Shape of the exported video"><option value="">Same shape${PR.aspect?' ('+PR.aspect+')':''}</option><option value="9:16">9:16 Vertical - Shorts / Reels / TikTok</option><option value="4:5">4:5 Portrait - Instagram / Facebook feed</option><option value="3:4">3:4 Portrait</option><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape - YouTube / widescreen</option></select><select id=exRes title="Resolution of the exported video"><option value="1080">1080p Full HD</option><option value="720">720p HD</option><option value="1440">1440p 2K</option><option value="2160">2160p 4K</option><option value="480">480p</option></select><select id=exCap title="Captions in the exported video"><option value="">Captions as planned</option><option value="on">Captions on</option><option value="off">Captions off</option></select><button class=s onclick="doExport()" data-need>Export selected</button><button class="s" onclick=redoPreview() data-need>Refresh previews</button></div>`+
+ PR.clips.map(c=>`<article class="card clip"><div>${c.preview?`<video controls preload=metadata src="/files/${encodeURIComponent(PR.name)}/${c.preview}?v=${PVB}"></video>`:'<div class=vnone>no preview</div>'}</div>
  <div style="min-width:0"><div class=ch><label><input type=checkbox data-c="${c.clip_id}" ${sel.has(c.clip_id)?'checked':''} onchange="selOne('${c.clip_id}',this.checked)"><h3>#${c.rank} ${esc(c.title||c.clip_id)}${c.rejected?' <span class=pill>rejected</span>':''}</h3></label><span class=score title="Highlight score">${c.score}</span>
  <button class="ghost s" onclick="clipAct('${c.clip_id}','${c.rejected?'restore':'reject'}')" title="${c.rejected?'Bring this clip back':'Hide this clip (it can be restored; export skips it)'}">${c.rejected?'Restore':'Reject'}</button>
  <button class="ghost s" onclick="if(confirm('Delete ${c.clip_id}? It leaves the list and its files move to the _deleted folder of this video.'))clipAct('${c.clip_id}','delete')" title="Remove from the list (files go to _deleted)">Delete</button></div>
+ <div class="cprog ${WATCH[c.clip_id]?'':'hide'}" id="cp${c.clip_id}"><div class=cpt><span class=cpl>${esc((WATCH[c.clip_id]||{}).label||'')}</span><b class=cpp>${(WATCH[c.clip_id]||{}).pct||0}%</b></div><div class=bar><i style="width:${(WATCH[c.clip_id]||{}).pct||0}%"></i></div><div class="small cps">${esc((WATCH[c.clip_id]||{}).stage||'starting...')}</div></div>
  <div class=when>${fmt(c.start)} \u2013 ${fmt(c.end)} \u00b7 ${Math.round(c.end-c.start)}s \u00b7 ranked by ${esc(c.ranked_by)}${c.title?' \u00b7 '+esc(c.clip_id):''}</div>
  <div class=why>Why: ${esc(c.reason)}</div>
  <div class=tags>${c.layouts.map(l=>`<span class=pill>${l[0]} ${l[1].toFixed(0)}\u2013${l[2].toFixed(0)}s</span>`).join(' ')}${Object.entries(c.effects).map(([k,v])=>`<span class=pill>${k} \u00d7${v}</span>`).join(' ')}</div>
@@ -845,12 +984,82 @@ async function loadProj(keep){const n=$('proj').value;if(!n)return;PR=await (awa
  ${c.final_only?'<div class=small>Made by SupoClip - final MP4 (no editable plan).</div>':`<details id="o${c.clip_id}" ${open.has('o'+c.clip_id)?'open':''}><summary>Overrides &amp; captions</summary>
   <div class=row><div><label>Force one layout</label><select id="fl${c.clip_id}"><option value="">(automatic)</option>${['split','gameplay_voice','game_audio','pip','circle','reaction'].map(x=>`<option ${c.overrides.force_layout==x?'selected':''}>${x}</option>`).join('')}</select></div>
   <div><label>Turn off</label><div class=small>${['zoom','freeze','memes','sfx','captions','transitions'].map(x=>`<label style="display:inline-flex;gap:4px;margin:0 10px 0 0"><input type=checkbox id="d${c.clip_id}${x}" ${(c.overrides.disable||[]).includes(x)?'checked':''}>${x}</label>`).join('')}</div></div></div>
+  ${lookUI(c)}
   <label>Caption words (edit text; same word count keeps timing)</label><textarea rows=3 id="cap${c.clip_id}">${esc(c.captions)}</textarea>
   <div style="margin-top:8px"><button class=s onclick="saveOv('${c.clip_id}')">Save changes</button> <span class=small>then Refresh previews or export</span></div></details>`}
  ${c.finals.length?`<div class=finals>Finals: ${c.finals.map(f=>`<a href="/files/${encodeURIComponent(PR.name)}/${c.clip_id}/${f}" target=_blank>${f}</a>`).join(' \u00b7 ')}${c.capcut?' \u00b7 CapCut bundle in clip folder':''}</div>`:''}
  </div></article>`).join('');selUpd()}
 function selOne(id,on){on?sel.add(id):sel.delete(id);selUpd()}
+const RATIOS=[['50','50 : 50'],['40','60 : 40'],['35','65 : 35'],['32','68 : 32'],['25','75 : 25']],VIEWS=[['natural','Natural'],['wide_blur','Wider + blur'],['wide','Wider (stretched)'],['classic','Classic stretch']];
+function lookUI(c){const L=c.look||{},fp=Math.round((L.face_panel||0.32)*100),id=c.clip_id,o=(arr,v)=>arr.map(([k,t])=>`<option value="${k}" ${String(v)==k?'selected':''}>${t}</option>`).join('');
+ return `<div class=small style="margin:8px 0 2px;color:var(--tx)"><b>Look</b> - change it after cutting (no re-analysis)</div>
+ <div class=row><div><label>Streamer : ratio</label><div style="display:flex;gap:6px"><select onchange="if(this.value)$('lfp${id}').value=this.value"><option value="">Quick pick...</option>${o(RATIOS,'')}</select><input id="lfp${id}" type=number min=15 max=60 value=${fp} style="width:70px"></div></div>
+ <div><label>Gameplay view</label><div style="display:flex;gap:6px"><select id="lvw${id}" style="flex:1">${o(VIEWS,L.view||'natural')}</select><input id="lwd${id}" type=number min=0 max=35 value=${Math.round((L.widen??0.2)*100)} title="How much wider (%)" style="width:60px"></div></div></div>
+ <div class=row><div><label>Webcam corner</label><select id="lcf${id}">${o([['blur','Blur it'],['logo','My logo']],L.corner_fill||'blur')}</select></div>
+ <div><label>Keep crop away from corner</label><select id="lca${id}">${o([['normal','Normal'],['strong','Strong']],L.corner_avoid||'normal')}</select></div></div>
+ <div style="margin:6px 0 10px"><button class=s onclick="applyLook('${id}',false)">Apply &amp; preview</button> <button class="ghost s" onclick="applyLook('${id}',true)" title="Use this look for every clip that is not rejected">Apply to all clips</button></div>`}
+let PVB=Date.now();const WATCH={};
+function paintWatch(id){const w=WATCH[id],el=$('cp'+id);if(!el)return;el.classList.toggle('hide',!w);if(!w)return;
+ el.querySelector('.cpl').textContent=w.label;el.querySelector('.cpp').textContent=w.pct+'%';el.querySelector('.bar i').style.width=w.pct+'%';
+ el.querySelector('.cps').textContent=(w.stage||'')+(w.t0&&w.status==='running'?' · '+Math.round((Date.now()-w.t0)/1000)+' s':'');el.classList.toggle('ind',w.status==='running'&&w.pct<=5);el.classList.toggle('fail',w.status==='failed');el.classList.toggle('done',w.status==='done')}
+async function watchJob(jid,ids,label){if(!jid)return;ids=ids&&ids.length?ids:(PR?PR.clips.map(c=>c.clip_id):[]);
+ const t0=Date.now();ids.forEach(i=>{WATCH[i]={label,pct:0,stage:'queued...',status:'running',t0};paintWatch(i)});
+ for(;;){await new Promise(r=>setTimeout(r,900));let j;try{j=await (await fetch('/api/job?id='+jid)).json()}catch(e){continue}
+  const m=/(clip\d+)/.exec(j.stage||''),cur=m?m[1]:null,n=ids.length,k=cur?Math.max(0,ids.indexOf(cur)):0;
+  ids.forEach((i,ix)=>{const w=WATCH[i];if(!w)return;w.status=j.status;
+   if(n>1&&cur){w.pct=ix<k?100:ix===k?Math.max(5,Math.min(95,Math.round((j.pct*n)%100)||5)):0;w.stage=ix<k?'done':ix===k?(j.stage||''):'waiting...'}
+   else{w.pct=j.status==='done'?100:Math.max(3,j.pct||0);w.stage=j.stage||''}
+   if(j.status!=='running'){w.pct=j.status==='done'?100:w.pct;w.stage=j.status==='done'?'finished - preview updated':'failed - see Activity for the log'}
+   paintWatch(i)});
+  if(j.status!=='running'){toast(label+(j.status==='done'?' finished':' failed'),j.status==='done'?'good':'bad');PVB=Date.now();
+   setTimeout(()=>{ids.forEach(i=>delete WATCH[i]);if(PR)loadProj(true)},j.status==='done'?1200:6000);break}}}
+async function findMore(n){n=n||+$('moreN').value||3;const pk=document.querySelector('#morePick button.on')?.dataset.p||'fast';
+ const r=await post('/api/more',{project:PR.name,count:n,picker:pk});if(r.error){toast(r.error,'bad');return}
+ toast(`Finding ${n} more clip(s)...`,'good');watchJob(r.id,['_more'],'Finding more clips');state()}
+async function applyLook(id,all){const b={project:PR.name,clips:all?'all':[id],face_panel:$('lfp'+id).value,view:$('lvw'+id).value,widen:$('lwd'+id).value,corner_fill:$('lcf'+id).value,corner_avoid:$('lca'+id).value};
+ const r=await post('/api/restyle',b);if(r.error){toast(r.error,'bad');return}watchJob(r.id,all?PR.clips.filter(c=>!c.rejected).map(c=>c.clip_id):[id],'Applying new look')}
 async function clipAct(id,action){await post('/api/reject',{project:PR.name,clip:id,action});sel.delete(id);await loadProj(true)}
+let MODE='auto',PICK='fast',PICK_SET=false;
+const LAYS=[['split','Split','Gameplay top, streamer bottom'],['pip','Box','Small streamer box over gameplay'],['circle','Bubble','Round streamer bubble'],
+ ['reaction','Reaction','Big streamer top, gameplay bottom'],['gameplay_voice','Gameplay','Gameplay only, voice kept'],['auto','Auto','The preset decides per moment']];
+function laySvg(k,f,v,cf){ // 45x80 mock of a 9:16 frame
+ const W=45,H=80,g='#3b4256',st='#ff5fb0',ac='#ffd400',bl='#2a3042';let o='';
+ const game=(y,h,blur)=>{let r='';if(blur){const ih=h/(1+0.25);r+=`<rect x=0 y=${y} width=${W} height=${h} fill=${bl} /><rect x=0 y=${y+(h-ih)/2} width=${W} height=${ih} fill=${g} />`}else r+=`<rect x=0 y=${y} width=${W} height=${h} fill=${g} />`;
+   return r+`<path d="M${W*.3} ${y+h*.62} l${W*.12} ${-h*.22} l${W*.1} ${h*.12} l${W*.14} ${-h*.2} l${W*.1} ${h*.3}" stroke="#7d869d" stroke-width=1.4 fill=none />`};
+ const face=(x,y,w,h,r)=>`<rect x=${x} y=${y} width=${w} height=${h} rx=${r||0} fill=${st} opacity=.85 /><circle cx=${x+w/2} cy=${y+h*.42} r=${Math.min(w,h)*.16} fill=#ffd6ea />`;
+ if(k==='split'){const fh=H*f;o=game(0,H-fh,v==='wide_blur')+face(0,H-fh,W,fh)+`<rect x=0 y=${H-fh-.6} width=${W} height=1.2 fill=${ac} />`}
+ else if(k==='reaction'){const fh=H*.68;o=face(0,0,W,fh)+game(fh,H-fh,false)}
+ else if(k==='pip'){o=game(0,H,false)+face(W*.52,H*.56,W*.38,W*.38,3)}
+ else if(k==='circle'){o=game(0,H,false)+`<circle cx=${W*.72} cy=${H*.66} r=${W*.2} fill=${st} stroke=${ac} stroke-width=1.2 />`}
+ else if(k==='gameplay_voice'){o=game(0,H,false)}
+ else{o=game(0,H*.6,false)+face(0,H*.6,W,H*.4)+`<text x=${W/2} y=${H*.33} font-size=9 fill=#cfd4e2 text-anchor=middle font-weight=700>AUTO</text>`}
+ return `<svg viewBox="0 0 ${W} ${H}" width=${W} height=${H} style="border-radius:5px;overflow:hidden;display:block">${o}</svg>`}
+function lpDraw(){const lay=$('lay').value,f=Math.min(.6,Math.max(.15,(+$('fpn').value||32)/100)),v=$('vwm').value,w=Math.min(35,Math.max(0,+$('wdn').value||0))/100,cf=$('cfl').value;
+ const big=laySvg(lay,f,v,cf).replace('width=45 height=80','width=90 height=160');$('lpv').innerHTML=big;
+ const split=lay==='split'||lay==='auto';const nat=0.3164/(split?1-f:1);let vis=nat,note='true proportions';
+ if(split&&v==='classic'){vis=0.3164/0.5;note=`stretched ~${Math.round(((1-f)/0.5-1)*100)}% (50:50 framing)`}else if(v==='wide'){vis=nat*(1+w);note=`stretched ${Math.round(w*100)}%`}else if(v==='wide_blur'){vis=nat*(1+w);note='no stretch, blurred bars'}
+ const name=(LAYS.find(x=>x[0]===lay)||[,lay])[1];
+ $('lpt1').textContent=split?`${name}: gameplay ${Math.round((1-f)*100)}% · streamer ${Math.round(f*100)}%`:`${name}`;
+ $('lpt2').textContent=`Shows about ${Math.min(100,Math.round(vis*100))}% of your 16:9 recording's width (${note}).`;
+ $('lpt3').textContent=lay==='split'?(f>=.38?'Bigger face; webcam sides get cropped a little.':f<=.27?'Small face; tallest gameplay.':'Webcam fits almost without cropping.'):(lay==='auto'?'Layout switches with the action (split / box / reaction).':'');
+ document.querySelectorAll('#ltiles button').forEach(b=>b.classList.toggle('on',b.dataset.l===lay))}
+function tilesInit(){const t=$('ltiles');if(!t||t.dataset.ok)return;t.dataset.ok=1;
+ t.innerHTML=LAYS.map(([k,n,d])=>`<button type=button data-l="${k}" title="${d}">${laySvg(k,.32,'natural','blur')}<span>${n}</span></button>`).join('');
+ t.querySelectorAll('button').forEach(b=>b.onclick=()=>{$('lay').value=b.dataset.l;$('lay').dispatchEvent(new Event('change'));lpDraw()});
+ ['fpn','vwm','wdn','cfl','lay'].forEach(id=>{$(id).addEventListener('input',lpDraw);$(id).addEventListener('change',lpDraw)});
+ $('rtoSeg').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>setTimeout(lpDraw,0)));lpDraw()}
+document.addEventListener('DOMContentLoaded',tilesInit);setTimeout(tilesInit,350);
+function segInit(){
+ const rs=$('rtoSeg'),fp=$('fpn');if(!rs||rs.dataset.ok)return;rs.dataset.ok=1;
+ const mark=()=>rs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v==String(fp.value)));
+ rs.querySelectorAll('button').forEach(b=>b.onclick=()=>{fp.value=b.dataset.v;mark()});fp.addEventListener('input',mark);mark();
+ const ps=$('pickSeg');ps.querySelectorAll('button').forEach(b=>b.onclick=()=>{PICK=b.dataset.p;PICK_SET=true;ps.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b))});
+ const ms=$('modeSeg');ms.querySelectorAll('button').forEach(b=>b.onclick=()=>{MODE=b.dataset.m;ms.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+   $('autoBox').classList.toggle('hide',MODE!=='auto');$('manBox').classList.toggle('hide',MODE!=='manual')});
+ const vw=$('vwm'),wd=$('wdn'),sync=()=>{const on=vw.value==='wide'||vw.value==='wide_blur';wd.disabled=!on;wd.closest('div[style]').style.opacity=on?1:.45};vw.addEventListener('change',sync);sync();
+ const lay=$('lay'),syncL=()=>{const f=['split','reaction'].includes(lay.value)||lay.value==='auto';rs.style.opacity=f?1:.45};lay.addEventListener('change',syncL);syncL();
+}
+document.addEventListener('DOMContentLoaded',segInit);setTimeout(segInit,300);
 function selAll(on){PR.clips.forEach(c=>on?sel.add(c.clip_id):sel.delete(c.clip_id));document.querySelectorAll('input[data-c]').forEach(x=>x.checked=on);selUpd()}
 function selUpd(){const n=sel.size,t=PR?PR.clips.length:0;if(!$('selN'))return;$('selN').textContent=n?`${n} of ${t} selected`:'Select clips to export';
  document.querySelectorAll('[data-need]').forEach(b=>b.disabled=!n);const a=$('selall');if(a){a.checked=!!t&&n==t;a.indeterminate=n>0&&n<t}}
@@ -858,8 +1067,8 @@ const fmt=t=>{t=Math.floor(t);return [Math.floor(t/3600),Math.floor(t%3600/60),t
 async function saveOv(id){const dis=['zoom','freeze','memes','sfx','captions','transitions'].filter(x=>$('d'+id+x).checked);
  await post('/api/override',{project:PR.name,clip:id,force_layout:$('fl'+id).value,disable:dis});await post('/api/captions',{project:PR.name,clip:id,text:$('cap'+id).value});toast('Saved '+id,'good')}
 function picked(){if(!sel.size){alert('Tick the clips you want first');return null}return [...sel]}
-async function doExport(){const c=picked();if(!c)return;await post('/api/export',{project:PR.name,clips:c,aspect:$('exAsp').value,resolution:$('exRes').value,captions:$('exCap').value,force:true});toast('Export started. Progress shows under Activity.','good');state()}
-async function redoPreview(){const c=picked();if(!c)return;await post('/api/preview',{project:PR.name,clips:c});toast('Refreshing previews.','good');state()}
+async function doExport(){const c=picked();if(!c)return;const r=await post('/api/export',{project:PR.name,clips:c,aspect:$('exAsp').value,resolution:$('exRes').value,captions:$('exCap').value,force:true});toast('Export started - progress shows on each clip.','good');state();watchJob(r.id,c,'Exporting')}
+async function redoPreview(){const c=picked();if(!c)return;const r=await post('/api/preview',{project:PR.name,clips:c});toast('Refreshing previews.','good');state();watchJob(r.id,c,'Refreshing preview')}
 state();
 </script>"""
 PAGE = PAGE.replace("__CSS__", ui_settings.CSS).replace("__HTML__", ui_settings.HTML).replace("\nstate();\n</script>", "\n" + ui_settings.JS + "\nstate();\n</script>")
